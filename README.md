@@ -4,12 +4,14 @@ TimerBoard is a local-first Android timer app built with Kotlin and Jetpack Comp
 
 ## Current version
 
-Version: `1.01`
+Version: `1.1`
 
 - Saved countdown timers
 - Default starter timers: Coffee, Stretch, Focus
 - Create timers with a name, duration, and color
 - Tap a timer's time display to edit hours, minutes, and seconds
+- Choose from TimerBoard alarm patterns or Android's built-in phone sounds
+- Running timers show the 24-hour signal time down to the second
 - Start, pause, reset, delete individual timers
 - Start all and pause all timers from the top bar
 - Local persistence with `SharedPreferences`

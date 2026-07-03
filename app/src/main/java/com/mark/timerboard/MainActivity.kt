@@ -1,17 +1,26 @@
 package com.mark.timerboard
 
 import android.app.Application
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.media.AudioManager
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.media.ToneGenerator
+import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +57,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -65,6 +75,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,6 +90,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.max
 
 class MainActivity : ComponentActivity() {
@@ -101,7 +115,9 @@ data class TimerPreset(
     val id: Long,
     val name: String,
     val durationMillis: Long,
-    val color: Long
+    val color: Long,
+    val alarmId: String = DEFAULT_ALARM_ID,
+    val alarmUri: String? = null
 )
 
 data class TimerItem(
@@ -109,6 +125,21 @@ data class TimerItem(
     val remainingMillis: Long = preset.durationMillis,
     val isRunning: Boolean = false,
     val endElapsedRealtime: Long = 0L
+)
+
+data class AlarmSound(
+    val id: String,
+    val label: String,
+    val description: String,
+    val toneEvents: List<ToneEvent>,
+    val vibrationPattern: LongArray,
+    val vibrationAmplitudes: IntArray
+)
+
+data class ToneEvent(
+    val delayMillis: Long,
+    val tone: Int,
+    val durationMillis: Int
 )
 
 class TimerRepository(context: Context) {
@@ -125,7 +156,9 @@ class TimerRepository(context: Context) {
                     id = item.getLong("id"),
                     name = item.getString("name"),
                     durationMillis = item.getLong("durationMillis"),
-                    color = item.getLong("color")
+                    color = item.getLong("color"),
+                    alarmId = alarmById(item.optString("alarmId", DEFAULT_ALARM_ID)).id,
+                    alarmUri = item.optString("alarmUri", "").ifBlank { null }
                 )
             }
         }.getOrDefault(defaultPresets())
@@ -140,15 +173,17 @@ class TimerRepository(context: Context) {
                     .put("name", preset.name)
                     .put("durationMillis", preset.durationMillis)
                     .put("color", preset.color)
+                    .put("alarmId", preset.alarmId)
+                    .put("alarmUri", preset.alarmUri.orEmpty())
             )
         }
         prefs.edit().putString("presets", array.toString()).apply()
     }
 
     private fun defaultPresets(): List<TimerPreset> = listOf(
-        TimerPreset(1L, "Coffee", 4.minutes, 0xFF8B5E3C),
-        TimerPreset(2L, "Stretch", 10.minutes, 0xFF2F7D69),
-        TimerPreset(3L, "Focus", 25.minutes, 0xFF365D8C)
+        TimerPreset(1L, "Coffee", 4.minutes, 0xFF8B5E3C, "chime"),
+        TimerPreset(2L, "Stretch", 10.minutes, 0xFF2F7D69, "soft"),
+        TimerPreset(3L, "Focus", 25.minutes, 0xFF365D8C, "chime")
     )
 }
 
@@ -163,23 +198,43 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         timers.addAll(repository.loadPresets().map { TimerItem(it) })
     }
 
-    fun addTimer(name: String, minutes: Int, seconds: Int, color: Long) {
+    fun addTimer(
+        name: String,
+        minutes: Int,
+        seconds: Int,
+        color: Long,
+        alarmId: String,
+        alarmUri: String?
+    ) {
         val duration = ((minutes * 60L) + seconds).coerceAtLeast(1L) * 1000L
         val preset = TimerPreset(
             id = System.currentTimeMillis(),
             name = name.ifBlank { "Timer" },
             durationMillis = duration,
-            color = color
+            color = color,
+            alarmId = alarmById(alarmId).id,
+            alarmUri = alarmUri
         )
         timers.add(0, TimerItem(preset))
         save()
     }
 
-    fun updateTimerDuration(id: Long, hours: Int, minutes: Int, seconds: Int) {
+    fun updateTimerDuration(
+        id: Long,
+        hours: Int,
+        minutes: Int,
+        seconds: Int,
+        alarmId: String,
+        alarmUri: String?
+    ) {
         val duration = ((hours * 3600L) + (minutes * 60L) + seconds).coerceAtLeast(1L) * 1000L
         updateTimer(id) { item ->
             item.copy(
-                preset = item.preset.copy(durationMillis = duration),
+                preset = item.preset.copy(
+                    durationMillis = duration,
+                    alarmId = alarmById(alarmId).id,
+                    alarmUri = alarmUri
+                ),
                 remainingMillis = duration,
                 isRunning = false,
                 endElapsedRealtime = 0L
@@ -249,7 +304,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                             isRunning = remaining > 0L
                         )
                         if (remaining == 0L) {
-                            alertPlayer.play()
+                            alertPlayer.play(item.preset.alarmId, item.preset.alarmUri)
                         }
                     }
                 }
@@ -277,19 +332,53 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
 
 class TimerAlertPlayer(private val context: Context) {
     private val toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
+    private val handler = Handler(Looper.getMainLooper())
+    private var activeRingtone: Ringtone? = null
 
-    fun play() {
-        toneGenerator.startTone(ToneGenerator.TONE_PROP_ACK, 350)
-        val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+    fun play(alarmId: String, alarmUri: String?) {
+        alarmUri?.let { uriText ->
+            val ringtone = RingtoneManager.getRingtone(context, Uri.parse(uriText))
+            if (ringtone != null) {
+                activeRingtone?.stop()
+                activeRingtone = ringtone
+                ringtone.play()
+                handler.postDelayed({ ringtone.stop() }, 10_000L)
+                vibrateSystemSound()
+                return
+            }
+        }
+
+        val alarm = alarmById(alarmId)
+        alarm.toneEvents.forEach { event ->
+            handler.postDelayed(
+                { toneGenerator.startTone(event.tone, event.durationMillis) },
+                event.delayMillis
+            )
+        }
+        vibrator.vibrate(
+            VibrationEffect.createWaveform(
+                alarm.vibrationPattern,
+                alarm.vibrationAmplitudes,
+                -1
+            )
+        )
+    }
+
+    private fun vibrateSystemSound() {
+        vibrator.vibrate(VibrationEffect.createOneShot(450L, VibrationEffect.DEFAULT_AMPLITUDE))
+    }
+
+    private val vibrator: Vibrator
+        get() = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             context.getSystemService(VibratorManager::class.java).defaultVibrator
         } else {
             @Suppress("DEPRECATION")
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
-        vibrator.vibrate(VibrationEffect.createOneShot(350L, VibrationEffect.DEFAULT_AMPLITUDE))
-    }
 
     fun release() {
+        handler.removeCallbacksAndMessages(null)
+        activeRingtone?.stop()
         toneGenerator.release()
     }
 }
@@ -364,8 +453,8 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     if (showCreateDialog) {
         CreateTimerDialog(
             onDismiss = { showCreateDialog = false },
-            onCreate = { name, minutes, seconds, color ->
-                viewModel.addTimer(name, minutes, seconds, color)
+            onCreate = { name, minutes, seconds, color, alarmId, alarmUri ->
+                viewModel.addTimer(name, minutes, seconds, color, alarmId, alarmUri)
                 showCreateDialog = false
             }
         )
@@ -375,8 +464,15 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
         EditDurationDialog(
             timer = timer,
             onDismiss = { timerBeingEdited = null },
-            onSave = { hours, minutes, seconds ->
-                viewModel.updateTimerDuration(timer.preset.id, hours, minutes, seconds)
+            onSave = { hours, minutes, seconds, alarmId, alarmUri ->
+                viewModel.updateTimerDuration(
+                    timer.preset.id,
+                    hours,
+                    minutes,
+                    seconds,
+                    alarmId,
+                    alarmUri
+                )
                 timerBeingEdited = null
             }
         )
@@ -466,6 +562,15 @@ fun TimerCard(
                     Text("Reset")
                 }
             }
+            if (timer.isRunning) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Alarm will signal at ${timer.signalTimeText()}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }
@@ -500,7 +605,7 @@ fun EmptyTimers(modifier: Modifier = Modifier, onCreate: () -> Unit) {
 fun EditDurationDialog(
     timer: TimerItem,
     onDismiss: () -> Unit,
-    onSave: (Int, Int, Int) -> Unit
+    onSave: (Int, Int, Int, String, String?) -> Unit
 ) {
     val durationSeconds = timer.preset.durationMillis / 1000L
     var hours by remember(timer.preset.id) {
@@ -511,6 +616,12 @@ fun EditDurationDialog(
     }
     var seconds by remember(timer.preset.id) {
         mutableStateOf((durationSeconds % 60L).toString())
+    }
+    var selectedAlarmId by remember(timer.preset.id) {
+        mutableStateOf(alarmById(timer.preset.alarmId).id)
+    }
+    var selectedAlarmUri by remember(timer.preset.id) {
+        mutableStateOf(timer.preset.alarmUri)
     }
 
     AlertDialog(
@@ -543,6 +654,15 @@ fun EditDurationDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                AlarmSelector(
+                    selectedAlarmId = selectedAlarmId,
+                    selectedAlarmUri = selectedAlarmUri,
+                    onSelected = {
+                        selectedAlarmId = it
+                        selectedAlarmUri = null
+                    },
+                    onSystemSoundSelected = { selectedAlarmUri = it }
+                )
             }
         },
         confirmButton = {
@@ -551,7 +671,9 @@ fun EditDurationDialog(
                     onSave(
                         hours.toIntOrNull() ?: 0,
                         (minutes.toIntOrNull() ?: 0).coerceIn(0, 59),
-                        (seconds.toIntOrNull() ?: 0).coerceIn(0, 59)
+                        (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
+                        selectedAlarmId,
+                        selectedAlarmUri
                     )
                 }
             ) {
@@ -569,12 +691,14 @@ fun EditDurationDialog(
 @Composable
 fun CreateTimerDialog(
     onDismiss: () -> Unit,
-    onCreate: (String, Int, Int, Long) -> Unit
+    onCreate: (String, Int, Int, Long, String, String?) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var minutes by remember { mutableStateOf("5") }
     var seconds by remember { mutableStateOf("0") }
     var selectedColor by remember { mutableLongStateOf(timerColors.first()) }
+    var selectedAlarmId by remember { mutableStateOf(DEFAULT_ALARM_ID) }
+    var selectedAlarmUri by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -611,6 +735,15 @@ fun CreateTimerDialog(
                         )
                     }
                 }
+                AlarmSelector(
+                    selectedAlarmId = selectedAlarmId,
+                    selectedAlarmUri = selectedAlarmUri,
+                    onSelected = {
+                        selectedAlarmId = it
+                        selectedAlarmUri = null
+                    },
+                    onSystemSoundSelected = { selectedAlarmUri = it }
+                )
             }
         },
         confirmButton = {
@@ -620,7 +753,9 @@ fun CreateTimerDialog(
                         name.trim(),
                         minutes.toIntOrNull() ?: 0,
                         (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
-                        selectedColor
+                        selectedColor,
+                        selectedAlarmId,
+                        selectedAlarmUri
                     )
                 }
             ) {
@@ -650,6 +785,89 @@ fun TimeNumberField(
         singleLine = true,
         modifier = modifier
     )
+}
+
+@Composable
+fun AlarmSelector(
+    selectedAlarmId: String,
+    selectedAlarmUri: String?,
+    onSelected: (String) -> Unit,
+    onSystemSoundSelected: (String?) -> Unit
+) {
+    val context = LocalContext.current
+    val ringtonePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            @Suppress("DEPRECATION")
+            val uri = result.data?.getParcelableExtra<Uri>(
+                RingtoneManager.EXTRA_RINGTONE_PICKED_URI
+            )
+            onSystemSoundSelected(uri?.toString())
+        }
+    }
+    val selectedSystemSoundTitle = selectedAlarmUri?.let { uriText ->
+        RingtoneManager.getRingtone(context, Uri.parse(uriText))?.getTitle(context)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "Alarm sound",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold
+        )
+        alarmSounds.forEach { alarm ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onSelected(alarm.id) }
+                    .padding(vertical = 6.dp)
+            ) {
+                RadioButton(
+                    selected = selectedAlarmId == alarm.id,
+                    onClick = { onSelected(alarm.id) }
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(alarm.label, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        alarm.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        OutlinedButton(
+            onClick = {
+                val existingUri = selectedAlarmUri?.let(Uri::parse)
+                ringtonePicker.launch(
+                    Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                        putExtra(
+                            RingtoneManager.EXTRA_RINGTONE_TYPE,
+                            RingtoneManager.TYPE_ALARM or RingtoneManager.TYPE_NOTIFICATION
+                        )
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Choose timer sound")
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                        putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, existingUri)
+                    }
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (selectedSystemSoundTitle == null) {
+                    "Choose phone sound"
+                } else {
+                    "Phone sound: $selectedSystemSoundTitle"
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
 }
 
 @Composable
@@ -691,8 +909,69 @@ val timerColors = listOf(
     0xFF70733E
 )
 
+const val DEFAULT_ALARM_ID = "chime"
+
+val alarmSounds = listOf(
+    AlarmSound(
+        id = "beacon",
+        label = "Beacon",
+        description = "Jarring triple beep",
+        toneEvents = listOf(
+            ToneEvent(0L, ToneGenerator.TONE_PROP_NACK, 220),
+            ToneEvent(320L, ToneGenerator.TONE_PROP_NACK, 220),
+            ToneEvent(640L, ToneGenerator.TONE_PROP_NACK, 320)
+        ),
+        vibrationPattern = longArrayOf(0L, 180L, 90L, 180L, 90L, 260L),
+        vibrationAmplitudes = intArrayOf(0, 255, 0, 255, 0, 255)
+    ),
+    AlarmSound(
+        id = "pulse",
+        label = "Pulse",
+        description = "Sharp repeating alert",
+        toneEvents = listOf(
+            ToneEvent(0L, ToneGenerator.TONE_PROP_BEEP, 160),
+            ToneEvent(220L, ToneGenerator.TONE_PROP_BEEP, 160),
+            ToneEvent(440L, ToneGenerator.TONE_PROP_BEEP, 160),
+            ToneEvent(660L, ToneGenerator.TONE_PROP_BEEP, 220)
+        ),
+        vibrationPattern = longArrayOf(0L, 120L, 80L, 120L, 80L, 120L, 80L, 180L),
+        vibrationAmplitudes = intArrayOf(0, 230, 0, 230, 0, 230, 0, 255)
+    ),
+    AlarmSound(
+        id = "chime",
+        label = "Chime",
+        description = "Smooth two-note signal",
+        toneEvents = listOf(
+            ToneEvent(0L, ToneGenerator.TONE_PROP_ACK, 220),
+            ToneEvent(340L, ToneGenerator.TONE_PROP_PROMPT, 360)
+        ),
+        vibrationPattern = longArrayOf(0L, 120L, 140L, 180L),
+        vibrationAmplitudes = intArrayOf(0, 120, 0, 150)
+    ),
+    AlarmSound(
+        id = "soft",
+        label = "Soft",
+        description = "Gentle single reminder",
+        toneEvents = listOf(
+            ToneEvent(0L, ToneGenerator.TONE_PROP_ACK, 250)
+        ),
+        vibrationPattern = longArrayOf(0L, 220L),
+        vibrationAmplitudes = intArrayOf(0, 90)
+    )
+)
+
+fun alarmById(id: String): AlarmSound {
+    return alarmSounds.firstOrNull { it.id == id } ?: alarmSounds.first { it.id == DEFAULT_ALARM_ID }
+}
+
 val Int.minutes: Long
     get() = this * 60_000L
+
+fun TimerItem.signalTimeText(): String {
+    return timeFormatter.format(Date(System.currentTimeMillis() + remainingMillis))
+}
+
+val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.US)
 
 fun Long.formatTimer(): String {
     val totalSeconds = this / 1000L
