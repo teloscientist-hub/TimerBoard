@@ -4,7 +4,7 @@ TimerBoard is a local-first Android timer app built with Kotlin and Jetpack Comp
 
 ## Current version
 
-Version: `1.7`
+Version: `1.8`
 
 - Saved countdown timers
 - Saved interval timers with warmup, work, rest, cooldown, and rounds
@@ -18,6 +18,7 @@ Version: `1.7`
 - Running timer notification includes pause-all and reset-all actions
 - Start, pause, reset, delete individual timers
 - Visible edit action and delete confirmation for safer timer management
+- Loading and completion states for clearer timer feedback
 - Start all and pause all timers from the top bar
 - Local persistence with Room, including migration from the earlier `SharedPreferences` store
 - Completion tone and vibration

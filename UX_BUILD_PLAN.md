@@ -11,9 +11,9 @@ Based on `../top-ux-design-for-phone-apps-guidebook.md`.
 
 ## Priority 2: Accessibility and State Feedback
 
-- Add semantic labels for icon-only controls.
-- Improve large text resilience for timer cards and dialogs.
-- Add clear empty, loading, disabled, and completion states.
+- Add semantic labels for icon-only controls. Started in v1.7.
+- Improve large text resilience for timer cards and dialogs. Started in v1.8 by restructuring card actions.
+- Add clear empty, loading, disabled, and completion states. Loading and completion states added in v1.8.
 - Audit touch target spacing.
 
 ## Priority 3: Workflow Efficiency

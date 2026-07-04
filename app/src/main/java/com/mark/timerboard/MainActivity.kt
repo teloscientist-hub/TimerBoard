@@ -57,6 +57,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -177,10 +178,13 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     private var tickerJob: Job? = null
 
     val timers = mutableStateListOf<TimerItem>()
+    var isLoading by mutableStateOf(true)
+        private set
 
     init {
         viewModelScope.launch {
             timers.addAll(repository.loadPresets().map { TimerItem(it) })
+            isLoading = false
             syncActiveTimerNotification()
         }
         TimerCommandBus.register(
@@ -281,9 +285,15 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
 
     fun startTimer(id: Long) {
         updateTimer(id) { item ->
+            val duration = if (item.remainingMillis <= 0L) {
+                item.preset.totalDurationMillis()
+            } else {
+                item.remainingMillis
+            }
             item.copy(
                 isRunning = true,
-                endElapsedRealtime = SystemClock.elapsedRealtime() + item.remainingMillis
+                remainingMillis = duration,
+                endElapsedRealtime = SystemClock.elapsedRealtime() + duration
             )
         }
         ensureTicker()
@@ -476,7 +486,13 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
             }
         }
     ) { padding ->
-        if (viewModel.timers.isEmpty()) {
+        if (viewModel.isLoading) {
+            LoadingTimers(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            )
+        } else if (viewModel.timers.isEmpty()) {
             EmptyTimers(
                 modifier = Modifier
                     .fillMaxSize()
@@ -595,6 +611,7 @@ fun TimerCard(
     val accent = Color(timer.preset.color)
     val phaseText = timer.intervalPhaseText()
     val modeLabel = if (timer.preset.mode == TIMER_MODE_INTERVAL) "Interval" else "Countdown"
+    val isComplete = !timer.isRunning && timer.remainingMillis == 0L
 
     Card(
         shape = RoundedCornerShape(8.dp),
@@ -668,26 +685,45 @@ fun TimerCard(
                 )
             }
             Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = if (timer.isRunning) onPause else onStart) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Button(
+                    onClick = if (timer.isRunning) onPause else onStart,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Icon(
                         if (timer.isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = null
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(if (timer.isRunning) "Pause timer" else "Start timer")
+                    Text(
+                        when {
+                            timer.isRunning -> "Pause"
+                            isComplete -> "Restart"
+                            else -> "Start"
+                        }
+                    )
                 }
-                OutlinedButton(onClick = onReset) {
+                OutlinedButton(
+                    onClick = onReset,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Reset timer")
+                    Text("Reset")
                 }
-                if (timer.preset.mode == TIMER_MODE_INTERVAL) {
-                    OutlinedButton(onClick = onOpenFullScreen) {
-                        Icon(Icons.Default.OpenInFull, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Full screen")
-                    }
+            }
+            if (timer.preset.mode == TIMER_MODE_INTERVAL) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onOpenFullScreen,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.OpenInFull, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Full screen")
                 }
             }
             if (timer.isRunning) {
@@ -698,8 +734,33 @@ fun TimerCard(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.error
                 )
+            } else if (isComplete) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Complete",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
             }
         }
+    }
+}
+
+@Composable
+fun LoadingTimers(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        CircularProgressIndicator()
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Loading timers",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
@@ -1356,6 +1417,7 @@ fun intervalDurationMillis(
 fun TimerItem.intervalPhaseText(): String? {
     val preset = preset
     if (preset.mode != TIMER_MODE_INTERVAL) return null
+    if (!isRunning && remainingMillis == 0L) return "Complete"
 
     var elapsedMillis = (preset.totalDurationMillis() - remainingMillis).coerceAtLeast(0L)
     if (preset.warmupMillis > 0L) {
