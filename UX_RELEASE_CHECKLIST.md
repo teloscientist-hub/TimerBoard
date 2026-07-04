@@ -19,6 +19,8 @@ Use this checklist before app releases that affect UI, workflows, alarms, notifi
 - Kill and reopen the app while a timer is paused; confirm remaining time is preserved.
 - Confirm a completed timer records history once.
 - Open History and confirm recent completions show newest first.
+- Confirm History filters show all, countdown, Pomodoro, and interval completions correctly.
+- Confirm Export shares only the currently filtered history.
 - Confirm Pomodoro completions update the History Pomodoro session and focus-time metrics.
 - Confirm Pomodoro full-screen mode shows focus, break, and long-break phases.
 - Clear History and confirm the destructive action requires confirmation.

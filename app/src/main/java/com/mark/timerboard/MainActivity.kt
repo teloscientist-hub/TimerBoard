@@ -754,6 +754,11 @@ fun HistoryScreen(
     onClear: () -> Unit
 ) {
     var confirmClear by remember { mutableStateOf(false) }
+    var selectedFilter by remember { mutableStateOf(HISTORY_FILTER_ALL) }
+    val context = LocalContext.current
+    val filteredItems = remember(items, selectedFilter) {
+        filterHistoryItems(items, selectedFilter)
+    }
 
     Scaffold(
         topBar = {
@@ -777,8 +782,20 @@ fun HistoryScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
-                    TextButton(onClick = onRefresh) {
-                        Text("Refresh")
+                    IconButton(onClick = onRefresh) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh history")
+                    }
+                    TextButton(
+                        enabled = filteredItems.isNotEmpty(),
+                        onClick = {
+                            shareHistory(
+                                context = context,
+                                items = filteredItems,
+                                filter = selectedFilter
+                            )
+                        }
+                    ) {
+                        Text("Export")
                     }
                     TextButton(
                         enabled = items.isNotEmpty(),
@@ -813,8 +830,20 @@ fun HistoryScreen(
                 item {
                     HistorySummaryCard(summary, pomodoroSummary)
                 }
-                items(items, key = { it.id }) { history ->
-                    HistoryItemCard(history)
+                item {
+                    HistoryFilterControls(
+                        selectedFilter = selectedFilter,
+                        onSelected = { selectedFilter = it }
+                    )
+                }
+                if (filteredItems.isEmpty()) {
+                    item {
+                        EmptyFilteredHistory()
+                    }
+                } else {
+                    items(filteredItems, key = { it.id }) { history ->
+                        HistoryItemCard(history)
+                    }
                 }
             }
         }
@@ -841,6 +870,75 @@ fun HistoryScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+fun HistoryFilterControls(
+    selectedFilter: String,
+    onSelected: (String) -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                "Filter",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HistoryFilterButton(
+                    label = "All",
+                    selected = selectedFilter == HISTORY_FILTER_ALL,
+                    onClick = { onSelected(HISTORY_FILTER_ALL) },
+                    modifier = Modifier.weight(1f)
+                )
+                HistoryFilterButton(
+                    label = "Countdown",
+                    selected = selectedFilter == TIMER_MODE_COUNTDOWN,
+                    onClick = { onSelected(TIMER_MODE_COUNTDOWN) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HistoryFilterButton(
+                    label = "Pomodoro",
+                    selected = selectedFilter == TIMER_MODE_POMODORO,
+                    onClick = { onSelected(TIMER_MODE_POMODORO) },
+                    modifier = Modifier.weight(1f)
+                )
+                HistoryFilterButton(
+                    label = "Interval",
+                    selected = selectedFilter == TIMER_MODE_INTERVAL,
+                    onClick = { onSelected(TIMER_MODE_INTERVAL) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun HistoryFilterButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (selected) {
+        Button(onClick = onClick, modifier = modifier) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = modifier) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -975,6 +1073,27 @@ fun EmptyHistory(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(8.dp))
         Text(
             "Completed timers will appear here.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun EmptyFilteredHistory() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            "No matching history",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Try another filter.",
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
@@ -1873,6 +1992,7 @@ val timerColors = listOf(
 )
 
 const val DEFAULT_ALARM_ID = "chime"
+const val HISTORY_FILTER_ALL = "all"
 const val TIMER_MODE_COUNTDOWN = "countdown"
 const val TIMER_MODE_INTERVAL = "interval"
 const val TIMER_MODE_POMODORO = "pomodoro"
@@ -1883,6 +2003,42 @@ fun modeLabel(mode: String): String {
         TIMER_MODE_POMODORO -> "Pomodoro"
         else -> "Countdown"
     }
+}
+
+fun filterHistoryItems(items: List<TimerHistoryItem>, filter: String): List<TimerHistoryItem> {
+    if (filter == HISTORY_FILTER_ALL) return items
+    return items.filter { it.mode == filter }
+}
+
+fun shareHistory(context: Context, items: List<TimerHistoryItem>, filter: String) {
+    val filterLabel = if (filter == HISTORY_FILTER_ALL) "All" else modeLabel(filter)
+    val body = buildString {
+        appendLine("TimerBoard history export")
+        appendLine("Filter: $filterLabel")
+        appendLine("Exported at: ${System.currentTimeMillis().formatHistoryTime()}")
+        appendLine()
+        appendLine("completed_at,name,mode,duration")
+        items.forEach { item ->
+            appendLine(
+                listOf(
+                    item.completedAtMillis.formatHistoryTime(),
+                    item.name,
+                    modeLabel(item.mode),
+                    item.durationMillis.formatTimer()
+                ).joinToString(",") { it.csvCell() }
+            )
+        }
+    }
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, "TimerBoard history")
+        putExtra(Intent.EXTRA_TEXT, body)
+    }
+    context.startActivity(Intent.createChooser(intent, "Export history"))
+}
+
+fun String.csvCell(): String {
+    return "\"${replace("\"", "\"\"")}\""
 }
 
 data class QuickCountdownPreset(
