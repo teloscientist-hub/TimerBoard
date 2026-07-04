@@ -48,6 +48,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -440,6 +441,7 @@ class TimerAlertPlayer(private val context: Context) {
 fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var timerBeingEdited by remember { mutableStateOf<TimerItem?>(null) }
+    var timerPendingDelete by remember { mutableStateOf<TimerItem?>(null) }
     var fullScreenTimerId by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
@@ -495,7 +497,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                         onStart = { viewModel.startTimer(timer.preset.id) },
                         onPause = { viewModel.pauseTimer(timer.preset.id) },
                         onReset = { viewModel.resetTimer(timer.preset.id) },
-                        onDelete = { viewModel.deleteTimer(timer.preset.id) },
+                        onDelete = { timerPendingDelete = timer },
                         onEditDuration = { timerBeingEdited = timer },
                         onOpenFullScreen = { fullScreenTimerId = timer.preset.id }
                     )
@@ -524,6 +526,17 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                     alarmUri = alarmUri
                 )
                 showCreateDialog = false
+            }
+        )
+    }
+
+    timerPendingDelete?.let { timer ->
+        DeleteTimerDialog(
+            timerName = timer.preset.name,
+            onDismiss = { timerPendingDelete = null },
+            onDelete = {
+                viewModel.deleteTimer(timer.preset.id)
+                timerPendingDelete = null
             }
         )
     }
@@ -581,6 +594,7 @@ fun TimerCard(
         .coerceIn(0f, 1f)
     val accent = Color(timer.preset.color)
     val phaseText = timer.intervalPhaseText()
+    val modeLabel = if (timer.preset.mode == TIMER_MODE_INTERVAL) "Interval" else "Countdown"
 
     Card(
         shape = RoundedCornerShape(8.dp),
@@ -608,8 +622,16 @@ fun TimerCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                Text(
+                    modeLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(onClick = onEditDuration) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit ${timer.preset.name}")
+                }
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete timer")
+                    Icon(Icons.Default.Delete, contentDescription = "Delete ${timer.preset.name}")
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -653,18 +675,18 @@ fun TimerCard(
                         contentDescription = null
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(if (timer.isRunning) "Pause" else "Start")
+                    Text(if (timer.isRunning) "Pause timer" else "Start timer")
                 }
                 OutlinedButton(onClick = onReset) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Reset")
+                    Text("Reset timer")
                 }
                 if (timer.preset.mode == TIMER_MODE_INTERVAL) {
                     OutlinedButton(onClick = onOpenFullScreen) {
                         Icon(Icons.Default.OpenInFull, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Full")
+                        Text("Full screen")
                     }
                 }
             }
@@ -679,6 +701,29 @@ fun TimerCard(
             }
         }
     }
+}
+
+@Composable
+fun DeleteTimerDialog(
+    timerName: String,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete timer?") },
+        text = { Text("Delete \"$timerName\"? This cannot be undone.") },
+        confirmButton = {
+            Button(onClick = onDelete) {
+                Text("Delete")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
