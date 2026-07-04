@@ -49,6 +49,14 @@ data class CompletionSummary(
     val totalMillis: Long = 0L
 )
 
+data class TimerHistoryItem(
+    val id: Long,
+    val name: String,
+    val completedAtMillis: Long,
+    val durationMillis: Long,
+    val mode: String
+)
+
 @Dao
 interface TimerPresetDao {
     @Query("SELECT * FROM timer_presets ORDER BY sortOrder ASC")
@@ -71,6 +79,12 @@ interface TimerHistoryDao {
 
     @Query("SELECT COALESCE(SUM(durationMillis), 0) FROM timer_history WHERE completedAtMillis >= :startMillis")
     suspend fun totalDurationSince(startMillis: Long): Long
+
+    @Query("SELECT * FROM timer_history ORDER BY completedAtMillis DESC LIMIT :limit")
+    suspend fun recent(limit: Int): List<TimerHistoryEntity>
+
+    @Query("DELETE FROM timer_history")
+    suspend fun deleteAll()
 }
 
 @Database(
@@ -176,6 +190,14 @@ class TimerRepository(context: Context) {
             count = historyDao.countSince(startOfDayMillis),
             totalMillis = historyDao.totalDurationSince(startOfDayMillis)
         )
+    }
+
+    suspend fun recentHistory(limit: Int = 100): List<TimerHistoryItem> {
+        return historyDao.recent(limit).map { it.toHistoryItem() }
+    }
+
+    suspend fun clearHistory() {
+        historyDao.deleteAll()
     }
 
     fun restoreRuntimeState(presets: List<TimerPreset>): List<TimerItem> {
@@ -304,6 +326,16 @@ class TimerRepository(context: Context) {
             restMillis = restMillis,
             cooldownMillis = cooldownMillis,
             rounds = rounds
+        )
+    }
+
+    private fun TimerHistoryEntity.toHistoryItem(): TimerHistoryItem {
+        return TimerHistoryItem(
+            id = id,
+            name = name,
+            completedAtMillis = completedAtMillis,
+            durationMillis = durationMillis,
+            mode = mode
         )
     }
 

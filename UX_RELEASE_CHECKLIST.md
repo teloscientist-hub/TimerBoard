@@ -17,6 +17,8 @@ Use this checklist before app releases that affect UI, workflows, alarms, notifi
 - Kill and reopen the app while a timer is running; confirm remaining time is restored from wall-clock time.
 - Kill and reopen the app while a timer is paused; confirm remaining time is preserved.
 - Confirm a completed timer records history once.
+- Open History and confirm recent completions show newest first.
+- Clear History and confirm the destructive action requires confirmation.
 
 ## Accessibility And Layout
 

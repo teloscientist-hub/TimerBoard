@@ -44,11 +44,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileCopy
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -167,12 +169,16 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         private set
     var todaySummary by mutableStateOf(CompletionSummary())
         private set
+    val historyItems = mutableStateListOf<TimerHistoryItem>()
+    var isHistoryLoading by mutableStateOf(false)
+        private set
 
     init {
         viewModelScope.launch {
             val presets = repository.loadPresets()
             timers.addAll(repository.restoreRuntimeState(presets))
             refreshTodaySummary()
+            refreshHistoryItems()
             isLoading = false
             ensureTicker()
             syncRuntimeAndNotification()
@@ -387,11 +393,34 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             repository.recordCompletion(preset)
             refreshTodaySummary()
+            refreshHistoryItems()
+        }
+    }
+
+    fun reloadHistory() {
+        viewModelScope.launch {
+            refreshTodaySummary()
+            refreshHistoryItems()
+        }
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch {
+            repository.clearHistory()
+            refreshTodaySummary()
+            refreshHistoryItems()
         }
     }
 
     private suspend fun refreshTodaySummary() {
         todaySummary = repository.todaySummary()
+    }
+
+    private suspend fun refreshHistoryItems() {
+        isHistoryLoading = true
+        historyItems.clear()
+        historyItems.addAll(repository.recentHistory())
+        isHistoryLoading = false
     }
 
     private fun syncRuntimeAndNotification() {
@@ -475,6 +504,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     var timerBeingEdited by remember { mutableStateOf<TimerItem?>(null) }
     var timerPendingDelete by remember { mutableStateOf<TimerItem?>(null) }
     var fullScreenTimerId by remember { mutableStateOf<Long?>(null) }
+    var showHistory by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { }
@@ -499,6 +529,18 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
         viewModel.startAll()
     }
 
+    if (showHistory) {
+        HistoryScreen(
+            summary = viewModel.todaySummary,
+            items = viewModel.historyItems,
+            isLoading = viewModel.isHistoryLoading,
+            onBack = { showHistory = false },
+            onRefresh = viewModel::reloadHistory,
+            onClear = viewModel::clearHistory
+        )
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -519,6 +561,12 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
+                    IconButton(onClick = {
+                        viewModel.reloadHistory()
+                        showHistory = true
+                    }) {
+                        Icon(Icons.Default.History, contentDescription = "View history")
+                    }
                     TextButton(onClick = ::startAllWithPermission) {
                         Text("Start all")
                     }
@@ -641,6 +689,224 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
         } ?: run {
             fullScreenTimerId = null
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HistoryScreen(
+    summary: CompletionSummary,
+    items: List<TimerHistoryItem>,
+    isLoading: Boolean,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    onClear: () -> Unit
+) {
+    var confirmClear by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to timers")
+                    }
+                },
+                title = {
+                    Column {
+                        Text("History", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            historyStatusText(summary),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                actions = {
+                    TextButton(onClick = onRefresh) {
+                        Text("Refresh")
+                    }
+                    TextButton(
+                        enabled = items.isNotEmpty(),
+                        onClick = { confirmClear = true }
+                    ) {
+                        Text("Clear")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        if (isLoading) {
+            LoadingTimers(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            )
+        } else if (items.isEmpty()) {
+            EmptyHistory(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    HistorySummaryCard(summary)
+                }
+                items(items, key = { it.id }) { history ->
+                    HistoryItemCard(history)
+                }
+            }
+        }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear history?") },
+            text = { Text("Remove all completed timer history? This cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onClear()
+                        confirmClear = false
+                    }
+                ) {
+                    Text("Clear")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun HistorySummaryCard(summary: CompletionSummary) {
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                "Today",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HistoryMetric(
+                    label = "Completed",
+                    value = summary.count.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+                HistoryMetric(
+                    label = "Total time",
+                    value = summary.totalMillis.formatTimer(),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun HistoryMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(
+            value,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun HistoryItemCard(history: TimerHistoryItem) {
+    val modeLabel = if (history.mode == TIMER_MODE_INTERVAL) "Interval" else "Countdown"
+
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    history.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${history.completedAtMillis.formatHistoryTime()} | $modeLabel",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                history.durationMillis.formatTimer(),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+fun EmptyHistory(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            Icons.Default.History,
+            contentDescription = null,
+            modifier = Modifier.size(44.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "No history yet",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Completed timers will appear here.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -1630,7 +1896,25 @@ fun appStatusText(runningCount: Int, summary: CompletionSummary): String {
     }
 }
 
+fun historyStatusText(summary: CompletionSummary): String {
+    val completionText = if (summary.count == 1) {
+        "1 completed today"
+    } else {
+        "${summary.count} completed today"
+    }
+    return if (summary.totalMillis > 0L) {
+        "$completionText | ${summary.totalMillis.formatTimer()} total"
+    } else {
+        completionText
+    }
+}
+
 val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.US)
+val historyTimeFormatter = SimpleDateFormat("MMM d, HH:mm:ss", Locale.US)
+
+fun Long.formatHistoryTime(): String {
+    return historyTimeFormatter.format(Date(this))
+}
 
 fun Long.formatTimer(): String {
     val totalSeconds = this / 1000L
