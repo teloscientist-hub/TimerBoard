@@ -1,15 +1,18 @@
 package com.mark.timerboard
 
+import android.Manifest
 import android.app.Application
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.media.ToneGenerator
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -21,6 +24,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -98,6 +103,7 @@ import kotlin.math.max
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestNotificationPermission()
         val viewModel = ViewModelProvider(
             this,
             TimerBoardViewModel.Factory(application)
@@ -107,6 +113,20 @@ class MainActivity : ComponentActivity() {
             TimerBoardTheme {
                 TimerBoardApp(viewModel)
             }
+        }
+    }
+
+    private fun requestNotificationPermission() {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                10
+            )
         }
     }
 }
@@ -188,6 +208,7 @@ class TimerRepository(context: Context) {
 }
 
 class TimerBoardViewModel(application: Application) : AndroidViewModel(application) {
+    private val appContext = application.applicationContext
     private val repository = TimerRepository(application)
     private val alertPlayer = TimerAlertPlayer(application)
     private var tickerJob: Job? = null
@@ -217,6 +238,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         )
         timers.add(0, TimerItem(preset))
         save()
+        syncActiveTimerNotification()
     }
 
     fun updateTimerDuration(
@@ -241,11 +263,13 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
         save()
+        syncActiveTimerNotification()
     }
 
     fun deleteTimer(id: Long) {
         timers.removeAll { it.preset.id == id }
         save()
+        syncActiveTimerNotification()
     }
 
     fun startTimer(id: Long) {
@@ -256,6 +280,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
         ensureTicker()
+        syncActiveTimerNotification()
     }
 
     fun pauseTimer(id: Long) {
@@ -266,6 +291,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                 endElapsedRealtime = 0L
             )
         }
+        syncActiveTimerNotification()
     }
 
     fun resetTimer(id: Long) {
@@ -276,6 +302,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                 endElapsedRealtime = 0L
             )
         }
+        syncActiveTimerNotification()
     }
 
     fun startAll() {
@@ -296,6 +323,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         tickerJob = viewModelScope.launch {
             while (timers.any { it.isRunning }) {
                 val now = SystemClock.elapsedRealtime()
+                var didFinishTimer = false
                 timers.forEachIndexed { index, item ->
                     if (item.isRunning) {
                         val remaining = max(0L, item.endElapsedRealtime - now)
@@ -304,12 +332,17 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                             isRunning = remaining > 0L
                         )
                         if (remaining == 0L) {
+                            didFinishTimer = true
                             alertPlayer.play(item.preset.alarmId, item.preset.alarmUri)
                         }
                     }
                 }
+                if (didFinishTimer) {
+                    syncActiveTimerNotification()
+                }
                 delay(250L)
             }
+            syncActiveTimerNotification()
         }
     }
 
@@ -317,7 +350,12 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         repository.savePresets(timers.map { it.preset })
     }
 
+    private fun syncActiveTimerNotification() {
+        TimerForegroundService.sync(appContext, timers.toList())
+    }
+
     override fun onCleared() {
+        syncActiveTimerNotification()
         alertPlayer.release()
         super.onCleared()
     }
