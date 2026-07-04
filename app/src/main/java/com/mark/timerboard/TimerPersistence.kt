@@ -11,6 +11,7 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.withTransaction
+import androidx.sqlite.db.SupportSQLiteDatabase
 import org.json.JSONArray
 
 @Entity(tableName = "timer_presets")
@@ -21,7 +22,13 @@ data class TimerPresetEntity(
     val color: Long,
     val alarmId: String,
     val alarmUri: String?,
-    val sortOrder: Int
+    val sortOrder: Int,
+    val mode: String,
+    val warmupMillis: Long,
+    val workMillis: Long,
+    val restMillis: Long,
+    val cooldownMillis: Long,
+    val rounds: Int
 )
 
 @Dao
@@ -38,7 +45,7 @@ interface TimerPresetDao {
 
 @Database(
     entities = [TimerPresetEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class TimerBoardDatabase : RoomDatabase() {
@@ -54,7 +61,20 @@ abstract class TimerBoardDatabase : RoomDatabase() {
                     context.applicationContext,
                     TimerBoardDatabase::class.java,
                     "timer_board.db"
-                ).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2)
+                    .build()
+                    .also { instance = it }
+            }
+        }
+
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE timer_presets ADD COLUMN mode TEXT NOT NULL DEFAULT 'countdown'")
+                db.execSQL("ALTER TABLE timer_presets ADD COLUMN warmupMillis INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE timer_presets ADD COLUMN workMillis INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE timer_presets ADD COLUMN restMillis INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE timer_presets ADD COLUMN cooldownMillis INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE timer_presets ADD COLUMN rounds INTEGER NOT NULL DEFAULT 1")
             }
         }
     }
@@ -98,7 +118,8 @@ class TimerRepository(context: Context) {
                     durationMillis = item.getLong("durationMillis"),
                     color = item.getLong("color"),
                     alarmId = alarmById(item.optString("alarmId", DEFAULT_ALARM_ID)).id,
-                    alarmUri = item.optString("alarmUri", "").ifBlank { null }
+                    alarmUri = item.optString("alarmUri", "").ifBlank { null },
+                    mode = TIMER_MODE_COUNTDOWN
                 )
             }
         }.getOrDefault(defaultPresets())
@@ -117,7 +138,13 @@ class TimerRepository(context: Context) {
             durationMillis = durationMillis,
             color = color,
             alarmId = alarmById(alarmId).id,
-            alarmUri = alarmUri
+            alarmUri = alarmUri,
+            mode = mode,
+            warmupMillis = warmupMillis,
+            workMillis = workMillis,
+            restMillis = restMillis,
+            cooldownMillis = cooldownMillis,
+            rounds = rounds
         )
     }
 
@@ -129,7 +156,13 @@ class TimerRepository(context: Context) {
             color = color,
             alarmId = alarmById(alarmId).id,
             alarmUri = alarmUri,
-            sortOrder = sortOrder
+            sortOrder = sortOrder,
+            mode = mode,
+            warmupMillis = warmupMillis,
+            workMillis = workMillis,
+            restMillis = restMillis,
+            cooldownMillis = cooldownMillis,
+            rounds = rounds
         )
     }
 

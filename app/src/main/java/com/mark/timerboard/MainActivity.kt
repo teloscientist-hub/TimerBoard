@@ -134,12 +134,18 @@ data class TimerPreset(
     val durationMillis: Long,
     val color: Long,
     val alarmId: String = DEFAULT_ALARM_ID,
-    val alarmUri: String? = null
+    val alarmUri: String? = null,
+    val mode: String = TIMER_MODE_COUNTDOWN,
+    val warmupMillis: Long = 0L,
+    val workMillis: Long = 0L,
+    val restMillis: Long = 0L,
+    val cooldownMillis: Long = 0L,
+    val rounds: Int = 1
 )
 
 data class TimerItem(
     val preset: TimerPreset,
-    val remainingMillis: Long = preset.durationMillis,
+    val remainingMillis: Long = preset.totalDurationMillis(),
     val isRunning: Boolean = false,
     val endElapsedRealtime: Long = 0L
 )
@@ -194,6 +200,43 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             color = color,
             alarmId = alarmById(alarmId).id,
             alarmUri = alarmUri
+        )
+        timers.add(0, TimerItem(preset))
+        saveAsync()
+        syncActiveTimerNotification()
+    }
+
+    fun addIntervalTimer(
+        name: String,
+        warmupSeconds: Int,
+        workSeconds: Int,
+        restSeconds: Int,
+        cooldownSeconds: Int,
+        rounds: Int,
+        color: Long,
+        alarmId: String,
+        alarmUri: String?
+    ) {
+        val normalizedRounds = rounds.coerceAtLeast(1)
+        val preset = TimerPreset(
+            id = System.currentTimeMillis(),
+            name = name.ifBlank { "Interval" },
+            durationMillis = intervalDurationMillis(
+                warmupSeconds = warmupSeconds,
+                workSeconds = workSeconds,
+                restSeconds = restSeconds,
+                cooldownSeconds = cooldownSeconds,
+                rounds = normalizedRounds
+            ),
+            color = color,
+            alarmId = alarmById(alarmId).id,
+            alarmUri = alarmUri,
+            mode = TIMER_MODE_INTERVAL,
+            warmupMillis = warmupSeconds.coerceAtLeast(0) * 1000L,
+            workMillis = workSeconds.coerceAtLeast(1) * 1000L,
+            restMillis = restSeconds.coerceAtLeast(0) * 1000L,
+            cooldownMillis = cooldownSeconds.coerceAtLeast(0) * 1000L,
+            rounds = normalizedRounds
         )
         timers.add(0, TimerItem(preset))
         saveAsync()
@@ -256,7 +299,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     fun resetTimer(id: Long) {
         updateTimer(id) { item ->
             item.copy(
-                remainingMillis = item.preset.durationMillis,
+                remainingMillis = item.preset.totalDurationMillis(),
                 isRunning = false,
                 endElapsedRealtime = 0L
             )
@@ -458,8 +501,22 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     if (showCreateDialog) {
         CreateTimerDialog(
             onDismiss = { showCreateDialog = false },
-            onCreate = { name, minutes, seconds, color, alarmId, alarmUri ->
+            onCreateCountdown = { name, minutes, seconds, color, alarmId, alarmUri ->
                 viewModel.addTimer(name, minutes, seconds, color, alarmId, alarmUri)
+                showCreateDialog = false
+            },
+            onCreateInterval = { name, warmup, work, rest, cooldown, rounds, color, alarmId, alarmUri ->
+                viewModel.addIntervalTimer(
+                    name = name,
+                    warmupSeconds = warmup,
+                    workSeconds = work,
+                    restSeconds = rest,
+                    cooldownSeconds = cooldown,
+                    rounds = rounds,
+                    color = color,
+                    alarmId = alarmId,
+                    alarmUri = alarmUri
+                )
                 showCreateDialog = false
             }
         )
@@ -493,9 +550,11 @@ fun TimerCard(
     onDelete: () -> Unit,
     onEditDuration: () -> Unit
 ) {
-    val progress = 1f - (timer.remainingMillis.toFloat() / timer.preset.durationMillis.toFloat())
+    val totalDuration = timer.preset.totalDurationMillis()
+    val progress = 1f - (timer.remainingMillis.toFloat() / totalDuration.toFloat())
         .coerceIn(0f, 1f)
     val accent = Color(timer.preset.color)
+    val phaseText = timer.intervalPhaseText()
 
     Card(
         shape = RoundedCornerShape(8.dp),
@@ -536,6 +595,15 @@ fun TimerCard(
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.clickable(onClick = onEditDuration)
             )
+            if (phaseText != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    phaseText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = accent
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Box(
                 Modifier
@@ -696,11 +764,18 @@ fun EditDurationDialog(
 @Composable
 fun CreateTimerDialog(
     onDismiss: () -> Unit,
-    onCreate: (String, Int, Int, Long, String, String?) -> Unit
+    onCreateCountdown: (String, Int, Int, Long, String, String?) -> Unit,
+    onCreateInterval: (String, Int, Int, Int, Int, Int, Long, String, String?) -> Unit
 ) {
+    var mode by remember { mutableStateOf(TIMER_MODE_COUNTDOWN) }
     var name by remember { mutableStateOf("") }
     var minutes by remember { mutableStateOf("5") }
     var seconds by remember { mutableStateOf("0") }
+    var warmupSeconds by remember { mutableStateOf("30") }
+    var workSeconds by remember { mutableStateOf("45") }
+    var restSeconds by remember { mutableStateOf("15") }
+    var cooldownSeconds by remember { mutableStateOf("60") }
+    var rounds by remember { mutableStateOf("4") }
     var selectedColor by remember { mutableLongStateOf(timerColors.first()) }
     var selectedAlarmId by remember { mutableStateOf(DEFAULT_ALARM_ID) }
     var selectedAlarmUri by remember { mutableStateOf<String?>(null) }
@@ -717,18 +792,69 @@ fun CreateTimerDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TimeNumberField(
-                        value = minutes,
-                        onValueChange = { minutes = it.filter(Char::isDigit).take(3) },
-                        label = "Minutes",
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ModeButton(
+                        text = "Countdown",
+                        selected = mode == TIMER_MODE_COUNTDOWN,
+                        onClick = { mode = TIMER_MODE_COUNTDOWN },
                         modifier = Modifier.weight(1f)
                     )
-                    TimeNumberField(
-                        value = seconds,
-                        onValueChange = { seconds = it.filter(Char::isDigit).take(2) },
-                        label = "Seconds",
+                    ModeButton(
+                        text = "Interval",
+                        selected = mode == TIMER_MODE_INTERVAL,
+                        onClick = { mode = TIMER_MODE_INTERVAL },
                         modifier = Modifier.weight(1f)
+                    )
+                }
+                if (mode == TIMER_MODE_COUNTDOWN) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TimeNumberField(
+                            value = minutes,
+                            onValueChange = { minutes = it.filter(Char::isDigit).take(3) },
+                            label = "Minutes",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TimeNumberField(
+                            value = seconds,
+                            onValueChange = { seconds = it.filter(Char::isDigit).take(2) },
+                            label = "Seconds",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TimeNumberField(
+                            value = warmupSeconds,
+                            onValueChange = { warmupSeconds = it.filter(Char::isDigit).take(4) },
+                            label = "Warmup sec",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TimeNumberField(
+                            value = workSeconds,
+                            onValueChange = { workSeconds = it.filter(Char::isDigit).take(4) },
+                            label = "Work sec",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TimeNumberField(
+                            value = restSeconds,
+                            onValueChange = { restSeconds = it.filter(Char::isDigit).take(4) },
+                            label = "Rest sec",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TimeNumberField(
+                            value = cooldownSeconds,
+                            onValueChange = { cooldownSeconds = it.filter(Char::isDigit).take(4) },
+                            label = "Cooldown sec",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    TimeNumberField(
+                        value = rounds,
+                        onValueChange = { rounds = it.filter(Char::isDigit).take(3) },
+                        label = "Rounds",
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -754,14 +880,28 @@ fun CreateTimerDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onCreate(
-                        name.trim(),
-                        minutes.toIntOrNull() ?: 0,
-                        (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
-                        selectedColor,
-                        selectedAlarmId,
-                        selectedAlarmUri
-                    )
+                    if (mode == TIMER_MODE_COUNTDOWN) {
+                        onCreateCountdown(
+                            name.trim(),
+                            minutes.toIntOrNull() ?: 0,
+                            (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
+                            selectedColor,
+                            selectedAlarmId,
+                            selectedAlarmUri
+                        )
+                    } else {
+                        onCreateInterval(
+                            name.trim(),
+                            warmupSeconds.toIntOrNull() ?: 0,
+                            (workSeconds.toIntOrNull() ?: 1).coerceAtLeast(1),
+                            restSeconds.toIntOrNull() ?: 0,
+                            cooldownSeconds.toIntOrNull() ?: 0,
+                            (rounds.toIntOrNull() ?: 1).coerceAtLeast(1),
+                            selectedColor,
+                            selectedAlarmId,
+                            selectedAlarmUri
+                        )
+                    }
                 }
             ) {
                 Text("Create")
@@ -790,6 +930,24 @@ fun TimeNumberField(
         singleLine = true,
         modifier = modifier
     )
+}
+
+@Composable
+fun ModeButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (selected) {
+        Button(onClick = onClick, modifier = modifier) {
+            Text(text)
+        }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = modifier) {
+            Text(text)
+        }
+    }
 }
 
 @Composable
@@ -915,6 +1073,8 @@ val timerColors = listOf(
 )
 
 const val DEFAULT_ALARM_ID = "chime"
+const val TIMER_MODE_COUNTDOWN = "countdown"
+const val TIMER_MODE_INTERVAL = "interval"
 
 val alarmSounds = listOf(
     AlarmSound(
@@ -971,6 +1131,58 @@ fun alarmById(id: String): AlarmSound {
 
 val Int.minutes: Long
     get() = this * 60_000L
+
+fun TimerPreset.totalDurationMillis(): Long {
+    if (mode != TIMER_MODE_INTERVAL) return durationMillis.coerceAtLeast(1_000L)
+    return intervalDurationMillis(
+        warmupSeconds = (warmupMillis / 1000L).toInt(),
+        workSeconds = (workMillis / 1000L).toInt(),
+        restSeconds = (restMillis / 1000L).toInt(),
+        cooldownSeconds = (cooldownMillis / 1000L).toInt(),
+        rounds = rounds
+    )
+}
+
+fun intervalDurationMillis(
+    warmupSeconds: Int,
+    workSeconds: Int,
+    restSeconds: Int,
+    cooldownSeconds: Int,
+    rounds: Int
+): Long {
+    val normalizedRounds = rounds.coerceAtLeast(1)
+    val work = workSeconds.coerceAtLeast(1) * 1000L
+    val rest = restSeconds.coerceAtLeast(0) * 1000L
+    return (warmupSeconds.coerceAtLeast(0) * 1000L) +
+        ((work + rest) * normalizedRounds) +
+        (cooldownSeconds.coerceAtLeast(0) * 1000L)
+}
+
+fun TimerItem.intervalPhaseText(): String? {
+    val preset = preset
+    if (preset.mode != TIMER_MODE_INTERVAL) return null
+
+    var elapsedMillis = (preset.totalDurationMillis() - remainingMillis).coerceAtLeast(0L)
+    if (preset.warmupMillis > 0L) {
+        if (elapsedMillis < preset.warmupMillis) return "Warmup"
+        elapsedMillis -= preset.warmupMillis
+    }
+
+    val workMillis = preset.workMillis.coerceAtLeast(1_000L)
+    val restMillis = preset.restMillis.coerceAtLeast(0L)
+    val roundMillis = workMillis + restMillis
+    val rounds = preset.rounds.coerceAtLeast(1)
+    val intervalMillis = roundMillis * rounds
+
+    if (elapsedMillis < intervalMillis) {
+        val roundIndex = (elapsedMillis / roundMillis).toInt().coerceIn(0, rounds - 1)
+        val roundElapsed = elapsedMillis % roundMillis
+        val phase = if (roundElapsed < workMillis || restMillis == 0L) "Work" else "Rest"
+        return "$phase round ${roundIndex + 1} of $rounds"
+    }
+
+    return if (preset.cooldownMillis > 0L) "Cooldown" else "Finishing"
+}
 
 fun TimerItem.signalTimeText(): String {
     return timeFormatter.format(Date(System.currentTimeMillis() + remainingMillis))

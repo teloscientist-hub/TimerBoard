@@ -4,9 +4,10 @@ TimerBoard is a local-first Android timer app built with Kotlin and Jetpack Comp
 
 ## Current version
 
-Version: `1.4`
+Version: `1.5`
 
 - Saved countdown timers
+- Saved interval timers with warmup, work, rest, cooldown, and rounds
 - Default starter timers: Coffee, Stretch, Focus
 - Create timers with a name, duration, and color
 - Tap a timer's time display to edit hours, minutes, and seconds
@@ -45,6 +46,6 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradle
 
 ## Suggested next steps
 
-1. Add interval mode: warmup, work, rest, cooldown, rounds, and full-screen phase display.
+1. Add full-screen interval phase display.
 2. Add Pomodoro mode with daily focus stats.
 3. Add history and completed timer analytics.
