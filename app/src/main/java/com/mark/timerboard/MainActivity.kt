@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileCopy
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -279,6 +280,17 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
 
     fun deleteTimer(id: Long) {
         timers.removeAll { it.preset.id == id }
+        saveAsync()
+        syncActiveTimerNotification()
+    }
+
+    fun duplicateTimer(id: Long) {
+        val timer = timers.firstOrNull { it.preset.id == id } ?: return
+        val duplicatePreset = timer.preset.copy(
+            id = System.currentTimeMillis(),
+            name = "${timer.preset.name} copy"
+        )
+        timers.add(0, TimerItem(duplicatePreset))
         saveAsync()
         syncActiveTimerNotification()
     }
@@ -514,6 +526,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                         onPause = { viewModel.pauseTimer(timer.preset.id) },
                         onReset = { viewModel.resetTimer(timer.preset.id) },
                         onDelete = { timerPendingDelete = timer },
+                        onDuplicate = { viewModel.duplicateTimer(timer.preset.id) },
                         onEditDuration = { timerBeingEdited = timer },
                         onOpenFullScreen = { fullScreenTimerId = timer.preset.id }
                     )
@@ -602,6 +615,7 @@ fun TimerCard(
     onPause: () -> Unit,
     onReset: () -> Unit,
     onDelete: () -> Unit,
+    onDuplicate: () -> Unit,
     onEditDuration: () -> Unit,
     onOpenFullScreen: () -> Unit
 ) {
@@ -646,6 +660,9 @@ fun TimerCard(
                 )
                 IconButton(onClick = onEditDuration) {
                     Icon(Icons.Default.Edit, contentDescription = "Edit ${timer.preset.name}")
+                }
+                IconButton(onClick = onDuplicate) {
+                    Icon(Icons.Default.FileCopy, contentDescription = "Duplicate ${timer.preset.name}")
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "Delete ${timer.preset.name}")

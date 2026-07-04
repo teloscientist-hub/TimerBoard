@@ -12,8 +12,8 @@ android {
         applicationId = "com.mark.timerboard"
         minSdk = 26
         targetSdk = 34
-        versionCode = 180
-        versionName = "1.8"
+        versionCode = 181
+        versionName = "1.81"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

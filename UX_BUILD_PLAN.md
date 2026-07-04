@@ -19,7 +19,7 @@ Based on `../top-ux-design-for-phone-apps-guidebook.md`.
 ## Priority 3: Workflow Efficiency
 
 - Add quick timer presets and recent durations.
-- Add duplicate timer action for repeated workflows.
+- Add duplicate timer action for repeated workflows. Added in v1.81.
 - Add better interval defaults and templates.
 
 ## Priority 4: App Reliability UX
