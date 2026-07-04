@@ -23,7 +23,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -107,7 +106,6 @@ import kotlin.math.max
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestNotificationPermission()
         val viewModel = ViewModelProvider(
             this,
             TimerBoardViewModel.Factory(application)
@@ -117,20 +115,6 @@ class MainActivity : ComponentActivity() {
             TimerBoardTheme {
                 TimerBoardApp(viewModel)
             }
-        }
-    }
-
-    private fun requestNotificationPermission() {
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                10
-            )
         }
     }
 }
@@ -461,10 +445,34 @@ class TimerAlertPlayer(private val context: Context) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimerBoardApp(viewModel: TimerBoardViewModel) {
+    val context = LocalContext.current
     var showCreateDialog by remember { mutableStateOf(false) }
     var timerBeingEdited by remember { mutableStateOf<TimerItem?>(null) }
     var timerPendingDelete by remember { mutableStateOf<TimerItem?>(null) }
     var fullScreenTimerId by remember { mutableStateOf<Long?>(null) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { }
+
+    fun requestTimerNotificationPermissionIfNeeded() {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    fun startTimerWithPermission(timerId: Long) {
+        requestTimerNotificationPermissionIfNeeded()
+        viewModel.startTimer(timerId)
+    }
+
+    fun startAllWithPermission() {
+        requestTimerNotificationPermissionIfNeeded()
+        viewModel.startAll()
+    }
 
     Scaffold(
         topBar = {
@@ -483,7 +491,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
-                    TextButton(onClick = viewModel::startAll) {
+                    TextButton(onClick = ::startAllWithPermission) {
                         Text("Start all")
                     }
                     TextButton(onClick = viewModel::pauseAll) {
@@ -522,7 +530,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                 items(viewModel.timers, key = { it.preset.id }) { timer ->
                     TimerCard(
                         timer = timer,
-                        onStart = { viewModel.startTimer(timer.preset.id) },
+                        onStart = { startTimerWithPermission(timer.preset.id) },
                         onPause = { viewModel.pauseTimer(timer.preset.id) },
                         onReset = { viewModel.resetTimer(timer.preset.id) },
                         onDelete = { timerPendingDelete = timer },
@@ -597,7 +605,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                 IntervalFullScreenView(
                     timer = timer,
                     onDismiss = { fullScreenTimerId = null },
-                    onStart = { viewModel.startTimer(timer.preset.id) },
+                    onStart = { startTimerWithPermission(timer.preset.id) },
                     onPause = { viewModel.pauseTimer(timer.preset.id) },
                     onReset = { viewModel.resetTimer(timer.preset.id) }
                 )

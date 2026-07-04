@@ -26,7 +26,7 @@ Based on `../top-ux-design-for-phone-apps-guidebook.md`.
 
 - Persist active timer runtime state for process death recovery.
 - Add notification resume support after persistence is in place.
-- Improve permission timing and explanation.
+- Improve permission timing and explanation. Notification permission now waits until timer start in v1.84.
 
 ## Priority 5: Measurement and Review
 
