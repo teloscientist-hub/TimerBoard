@@ -20,7 +20,7 @@ Based on `../top-ux-design-for-phone-apps-guidebook.md`.
 
 - Add quick timer presets and recent durations. Quick countdown presets added in v1.82.
 - Add duplicate timer action for repeated workflows. Added in v1.81.
-- Add better interval defaults and templates.
+- Add better interval defaults and templates. Interval templates added in v1.83.
 
 ## Priority 4: App Reliability UX
 

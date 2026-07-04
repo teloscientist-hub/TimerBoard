@@ -1126,6 +1126,43 @@ fun CreateTimerDialog(
                         )
                     }
                 } else {
+                    Text(
+                        "Interval templates",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        intervalTemplates.take(2).forEach { template ->
+                            QuickPresetButton(
+                                label = template.label,
+                                onClick = {
+                                    warmupSeconds = template.warmupSeconds.toString()
+                                    workSeconds = template.workSeconds.toString()
+                                    restSeconds = template.restSeconds.toString()
+                                    cooldownSeconds = template.cooldownSeconds.toString()
+                                    rounds = template.rounds.toString()
+                                    if (name.isBlank()) name = template.label
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        intervalTemplates.drop(2).forEach { template ->
+                            QuickPresetButton(
+                                label = template.label,
+                                onClick = {
+                                    warmupSeconds = template.warmupSeconds.toString()
+                                    workSeconds = template.workSeconds.toString()
+                                    restSeconds = template.restSeconds.toString()
+                                    cooldownSeconds = template.cooldownSeconds.toString()
+                                    rounds = template.rounds.toString()
+                                    if (name.isBlank()) name = template.label
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TimeNumberField(
                             value = warmupSeconds,
@@ -1406,6 +1443,22 @@ val quickCountdownPresets = listOf(
     QuickCountdownPreset("10 min", 10),
     QuickCountdownPreset("15 min", 15),
     QuickCountdownPreset("25 min", 25)
+)
+
+data class IntervalTemplate(
+    val label: String,
+    val warmupSeconds: Int,
+    val workSeconds: Int,
+    val restSeconds: Int,
+    val cooldownSeconds: Int,
+    val rounds: Int
+)
+
+val intervalTemplates = listOf(
+    IntervalTemplate("Tabata", 10, 20, 10, 30, 8),
+    IntervalTemplate("HIIT", 60, 45, 15, 60, 8),
+    IntervalTemplate("Boxing", 60, 180, 60, 60, 3),
+    IntervalTemplate("Focus Sprint", 30, 300, 60, 60, 4)
 )
 
 val alarmSounds = listOf(
