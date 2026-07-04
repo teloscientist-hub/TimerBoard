@@ -46,7 +46,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -85,6 +87,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -436,6 +440,7 @@ class TimerAlertPlayer(private val context: Context) {
 fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var timerBeingEdited by remember { mutableStateOf<TimerItem?>(null) }
+    var fullScreenTimerId by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
         topBar = {
@@ -491,7 +496,8 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                         onPause = { viewModel.pauseTimer(timer.preset.id) },
                         onReset = { viewModel.resetTimer(timer.preset.id) },
                         onDelete = { viewModel.deleteTimer(timer.preset.id) },
-                        onEditDuration = { timerBeingEdited = timer }
+                        onEditDuration = { timerBeingEdited = timer },
+                        onOpenFullScreen = { fullScreenTimerId = timer.preset.id }
                     )
                 }
             }
@@ -539,6 +545,25 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
             }
         )
     }
+
+    fullScreenTimerId?.let { timerId ->
+        viewModel.timers.firstOrNull { it.preset.id == timerId }?.let { timer ->
+            Dialog(
+                onDismissRequest = { fullScreenTimerId = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                IntervalFullScreenView(
+                    timer = timer,
+                    onDismiss = { fullScreenTimerId = null },
+                    onStart = { viewModel.startTimer(timer.preset.id) },
+                    onPause = { viewModel.pauseTimer(timer.preset.id) },
+                    onReset = { viewModel.resetTimer(timer.preset.id) }
+                )
+            }
+        } ?: run {
+            fullScreenTimerId = null
+        }
+    }
 }
 
 @Composable
@@ -548,7 +573,8 @@ fun TimerCard(
     onPause: () -> Unit,
     onReset: () -> Unit,
     onDelete: () -> Unit,
-    onEditDuration: () -> Unit
+    onEditDuration: () -> Unit,
+    onOpenFullScreen: () -> Unit
 ) {
     val totalDuration = timer.preset.totalDurationMillis()
     val progress = 1f - (timer.remainingMillis.toFloat() / totalDuration.toFloat())
@@ -634,6 +660,13 @@ fun TimerCard(
                     Spacer(Modifier.width(6.dp))
                     Text("Reset")
                 }
+                if (timer.preset.mode == TIMER_MODE_INTERVAL) {
+                    OutlinedButton(onClick = onOpenFullScreen) {
+                        Icon(Icons.Default.OpenInFull, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Full")
+                    }
+                }
             }
             if (timer.isRunning) {
                 Spacer(Modifier.height(12.dp))
@@ -643,6 +676,123 @@ fun TimerCard(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.error
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun IntervalFullScreenView(
+    timer: TimerItem,
+    onDismiss: () -> Unit,
+    onStart: () -> Unit,
+    onPause: () -> Unit,
+    onReset: () -> Unit
+) {
+    val accent = Color(timer.preset.color)
+    val totalDuration = timer.preset.totalDurationMillis()
+    val progress = 1f - (timer.remainingMillis.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
+    val phaseText = timer.intervalPhaseText() ?: "Interval"
+
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        timer.preset.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "Alarm will signal at ${timer.signalTimeText()}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close full screen")
+                }
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    phaseText.uppercase(Locale.US),
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.sp,
+                    color = accent
+                )
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    timer.remainingMillis.formatTimer(),
+                    fontSize = 76.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(18.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(progress)
+                            .height(14.dp)
+                            .background(accent)
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    timer.preset.intervalSummary(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Button(
+                    onClick = if (timer.isRunning) onPause else onStart,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        if (timer.isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = null
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (timer.isRunning) "Pause" else "Start")
+                }
+                OutlinedButton(
+                    onClick = onReset,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Reset")
+                }
             }
         }
     }
@@ -1182,6 +1332,13 @@ fun TimerItem.intervalPhaseText(): String? {
     }
 
     return if (preset.cooldownMillis > 0L) "Cooldown" else "Finishing"
+}
+
+fun TimerPreset.intervalSummary(): String {
+    if (mode != TIMER_MODE_INTERVAL) return ""
+    return "Warmup ${(warmupMillis / 1000L)}s | Work ${(workMillis / 1000L)}s | " +
+        "Rest ${(restMillis / 1000L)}s | Cooldown ${(cooldownMillis / 1000L)}s | " +
+        "${rounds.coerceAtLeast(1)} rounds"
 }
 
 fun TimerItem.signalTimeText(): String {
