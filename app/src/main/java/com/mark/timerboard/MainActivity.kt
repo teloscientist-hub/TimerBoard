@@ -6,6 +6,9 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon as AndroidIcon
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
@@ -102,23 +105,40 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 
 class MainActivity : ComponentActivity() {
+    private lateinit var viewModel: TimerBoardViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val viewModel = ViewModelProvider(
+        viewModel = ViewModelProvider(
             this,
             TimerBoardViewModel.Factory(application)
         )[TimerBoardViewModel::class.java]
+        handleShortcutIntent(intent)
 
         setContent {
             TimerBoardTheme {
                 TimerBoardApp(viewModel)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShortcutIntent(intent)
+    }
+
+    private fun handleShortcutIntent(intent: Intent?) {
+        if (intent?.action == ACTION_START_TIMER) {
+            viewModel.startTimerWhenLoaded(intent.getLongExtra(EXTRA_TIMER_ID, -1L))
         }
     }
 }
@@ -184,6 +204,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             refreshTodaySummary()
             refreshHistoryItems()
             isLoading = false
+            updateShortcuts()
             ensureTicker()
             syncRuntimeAndNotification()
         }
@@ -328,6 +349,19 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         syncRuntimeAndNotification()
     }
 
+    fun snoozeTimer(id: Long) {
+        alertPlayer.stop()
+        updateTimer(id) { item ->
+            item.copy(
+                remainingMillis = SNOOZE_MILLIS,
+                isRunning = true,
+                endElapsedRealtime = SystemClock.elapsedRealtime() + SNOOZE_MILLIS
+            )
+        }
+        ensureTicker()
+        syncRuntimeAndNotification()
+    }
+
     fun moveTimerUp(id: Long) {
         moveTimer(id, -1)
     }
@@ -337,6 +371,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun startTimer(id: Long) {
+        alertPlayer.stop()
         updateTimer(id) { item ->
             val duration = if (item.remainingMillis <= 0L) {
                 item.preset.totalDurationMillis()
@@ -354,6 +389,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun pauseTimer(id: Long) {
+        alertPlayer.stop()
         updateTimer(id) { item ->
             if (!item.isRunning) item else item.copy(
                 remainingMillis = max(0L, item.endElapsedRealtime - SystemClock.elapsedRealtime()),
@@ -365,6 +401,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun resetTimer(id: Long) {
+        alertPlayer.stop()
         updateTimer(id) { item ->
             item.copy(
                 remainingMillis = item.preset.totalDurationMillis(),
@@ -391,6 +428,29 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         timers
             .filter { !it.isRunning && it.remainingMillis in 1L until it.preset.totalDurationMillis() }
             .forEach { startTimer(it.preset.id) }
+    }
+
+    fun startTimerWhenLoaded(id: Long) {
+        if (id <= 0L) return
+        viewModelScope.launch {
+            while (isLoading) {
+                delay(100L)
+            }
+            startTimer(id)
+        }
+    }
+
+    fun exportPresetsText(): String {
+        return timers.map { it.preset }.toBackupJson()
+    }
+
+    fun importPresetsText(raw: String): Boolean {
+        val presets = raw.toTimerPresetsOrNull() ?: return false
+        timers.clear()
+        timers.addAll(presets.map { TimerItem(it) })
+        saveAsync()
+        syncRuntimeAndNotification()
+        return true
     }
 
     private fun updateTimer(id: Long, transform: (TimerItem) -> TimerItem) {
@@ -441,6 +501,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         val presets = timers.map { it.preset }
         viewModelScope.launch {
             repository.savePresets(presets)
+            updateShortcuts()
         }
     }
 
@@ -482,6 +543,25 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     private fun syncRuntimeAndNotification() {
         repository.saveRuntimeState(timers.toList())
         TimerForegroundService.sync(appContext, timers.toList())
+    }
+
+    private fun updateShortcuts() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return
+        val shortcutManager = appContext.getSystemService(ShortcutManager::class.java)
+        shortcutManager.dynamicShortcuts = timers.take(4).map { timer ->
+            ShortcutInfo.Builder(appContext, "timer_${timer.preset.id}")
+                .setShortLabel(timer.preset.name.take(10).ifBlank { "Timer" })
+                .setLongLabel("Start ${timer.preset.name}")
+                .setIcon(AndroidIcon.createWithResource(appContext, android.R.drawable.ic_media_play))
+                .setIntent(
+                    Intent(appContext, MainActivity::class.java).apply {
+                        action = ACTION_START_TIMER
+                        putExtra(EXTRA_TIMER_ID, timer.preset.id)
+                        flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    }
+                )
+                .build()
+        }
     }
 
     override fun onCleared() {
@@ -537,6 +617,12 @@ class TimerAlertPlayer(private val context: Context) {
         vibrator.vibrate(VibrationEffect.createOneShot(450L, VibrationEffect.DEFAULT_AMPLITUDE))
     }
 
+    fun stop() {
+        handler.removeCallbacksAndMessages(null)
+        activeRingtone?.stop()
+        toneGenerator.stopTone()
+    }
+
     private val vibrator: Vibrator
         get() = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             context.getSystemService(VibratorManager::class.java).defaultVibrator
@@ -546,8 +632,7 @@ class TimerAlertPlayer(private val context: Context) {
         }
 
     fun release() {
-        handler.removeCallbacksAndMessages(null)
-        activeRingtone?.stop()
+        stop()
         toneGenerator.release()
     }
 }
@@ -561,6 +646,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     var timerPendingDelete by remember { mutableStateOf<TimerItem?>(null) }
     var fullScreenTimerId by remember { mutableStateOf<Long?>(null) }
     var showHistory by remember { mutableStateOf(false) }
+    var showBackupDialog by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { }
@@ -624,6 +710,9 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                     }) {
                         Icon(Icons.Default.History, contentDescription = "View history")
                     }
+                    TextButton(onClick = { showBackupDialog = true }) {
+                        Text("Backup")
+                    }
                     TextButton(onClick = ::startAllWithPermission) {
                         Text("Start all")
                     }
@@ -673,6 +762,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                         onDuplicate = { viewModel.duplicateTimer(timer.preset.id) },
                         onMoveUp = { viewModel.moveTimerUp(timer.preset.id) },
                         onMoveDown = { viewModel.moveTimerDown(timer.preset.id) },
+                        onSnooze = { viewModel.snoozeTimer(timer.preset.id) },
                         onEditDuration = { timerBeingEdited = timer },
                         onOpenFullScreen = { fullScreenTimerId = timer.preset.id }
                     )
@@ -715,6 +805,15 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                 )
                 showCreateDialog = false
             }
+        )
+    }
+
+    if (showBackupDialog) {
+        BackupDialog(
+            backupText = viewModel.exportPresetsText(),
+            onDismiss = { showBackupDialog = false },
+            onExport = { sharePresetBackup(context, viewModel.exportPresetsText()) },
+            onImport = { raw -> viewModel.importPresetsText(raw) }
         )
     }
 
@@ -1136,6 +1235,7 @@ fun TimerCard(
     onDuplicate: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
+    onSnooze: () -> Unit,
     onEditDuration: () -> Unit,
     onOpenFullScreen: () -> Unit
 ) {
@@ -1291,15 +1391,102 @@ fun TimerCard(
                 )
             } else if (isComplete) {
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    "Complete",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.tertiary
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "Complete",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedButton(onClick = onSnooze) {
+                        Text("Snooze 5 min")
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+fun BackupDialog(
+    backupText: String,
+    onDismiss: () -> Unit,
+    onExport: () -> Unit,
+    onImport: (String) -> Boolean
+) {
+    var importText by remember { mutableStateOf("") }
+    var importError by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Backup timers") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Export saved timer presets or paste a TimerBoard backup to replace the current board.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = backupText,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Current backup") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = importText,
+                    onValueChange = {
+                        importText = it
+                        importError = false
+                    },
+                    label = { Text("Paste backup to import") },
+                    isError = importError,
+                    minLines = 3,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (importError) {
+                    Text(
+                        "Backup could not be read.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onExport) {
+                Text("Export")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
+                TextButton(
+                    enabled = importText.isNotBlank(),
+                    onClick = {
+                        if (onImport(importText)) {
+                            onDismiss()
+                        } else {
+                            importError = true
+                        }
+                    }
+                ) {
+                    Text("Import")
+                }
+            }
+        }
+    )
 }
 
 @Composable
@@ -2043,6 +2230,9 @@ const val HISTORY_FILTER_ALL = "all"
 const val TIMER_MODE_COUNTDOWN = "countdown"
 const val TIMER_MODE_INTERVAL = "interval"
 const val TIMER_MODE_POMODORO = "pomodoro"
+const val ACTION_START_TIMER = "com.mark.timerboard.START_TIMER"
+const val EXTRA_TIMER_ID = "timer_id"
+const val SNOOZE_MILLIS = 5 * 60_000L
 
 fun modeLabel(mode: String): String {
     return when (mode) {
@@ -2082,6 +2272,60 @@ fun shareHistory(context: Context, items: List<TimerHistoryItem>, filter: String
         putExtra(Intent.EXTRA_TEXT, body)
     }
     context.startActivity(Intent.createChooser(intent, "Export history"))
+}
+
+fun sharePresetBackup(context: Context, backupText: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/json"
+        putExtra(Intent.EXTRA_SUBJECT, "TimerBoard timer backup")
+        putExtra(Intent.EXTRA_TEXT, backupText)
+    }
+    context.startActivity(Intent.createChooser(intent, "Export timer backup"))
+}
+
+fun List<TimerPreset>.toBackupJson(): String {
+    val array = JSONArray()
+    forEach { preset ->
+        array.put(
+            JSONObject()
+                .put("id", preset.id)
+                .put("name", preset.name)
+                .put("durationMillis", preset.durationMillis)
+                .put("color", preset.color)
+                .put("alarmId", alarmById(preset.alarmId).id)
+                .put("alarmUri", preset.alarmUri)
+                .put("mode", preset.mode)
+                .put("warmupMillis", preset.warmupMillis)
+                .put("workMillis", preset.workMillis)
+                .put("restMillis", preset.restMillis)
+                .put("cooldownMillis", preset.cooldownMillis)
+                .put("rounds", preset.rounds)
+        )
+    }
+    return array.toString(2)
+}
+
+fun String.toTimerPresetsOrNull(): List<TimerPreset>? {
+    return runCatching {
+        val array = JSONArray(this)
+        List(array.length()) { index ->
+            val item = array.getJSONObject(index)
+            TimerPreset(
+                id = item.optLong("id").takeIf { it > 0L } ?: System.currentTimeMillis() + index,
+                name = item.optString("name", "Timer").ifBlank { "Timer" },
+                durationMillis = item.optLong("durationMillis", 60_000L).coerceAtLeast(1_000L),
+                color = item.optLong("color", timerColors.first()),
+                alarmId = alarmById(item.optString("alarmId", DEFAULT_ALARM_ID)).id,
+                alarmUri = item.optString("alarmUri", "").ifBlank { null },
+                mode = item.optString("mode", TIMER_MODE_COUNTDOWN),
+                warmupMillis = item.optLong("warmupMillis", 0L).coerceAtLeast(0L),
+                workMillis = item.optLong("workMillis", 0L).coerceAtLeast(0L),
+                restMillis = item.optLong("restMillis", 0L).coerceAtLeast(0L),
+                cooldownMillis = item.optLong("cooldownMillis", 0L).coerceAtLeast(0L),
+                rounds = item.optInt("rounds", 1).coerceAtLeast(1)
+            )
+        }
+    }.getOrNull()?.takeIf { it.isNotEmpty() }
 }
 
 fun String.csvCell(): String {
