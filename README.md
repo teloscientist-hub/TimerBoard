@@ -4,7 +4,7 @@ TimerBoard is a local-first Android timer app built with Kotlin and Jetpack Comp
 
 ## Current version
 
-Version: `2.21`
+Version: `2.22`
 
 - Saved countdown timers
 - Saved Pomodoro timers with focus, break, session, and long-break cycles
@@ -22,6 +22,7 @@ Version: `2.21`
 - Visible edit action and delete confirmation for safer timer management
 - Loading and completion states for clearer timer feedback
 - Duplicate timer action for repeated workflows
+- Move timers up or down to customize board order
 - Quick countdown presets in the create timer dialog
 - Interval templates for Tabata, HIIT, Boxing, and Focus Sprint
 - Notification permission is requested when timers start, not on app launch
@@ -63,5 +64,5 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradle
 
 ## Suggested next steps
 
-1. Add timer ordering.
-2. Add history date-range filtering.
+1. Add history date-range filtering.
+2. Add timer search or grouping.

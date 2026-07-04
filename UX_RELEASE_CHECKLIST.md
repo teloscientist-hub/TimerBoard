@@ -8,6 +8,7 @@ Use this checklist before app releases that affect UI, workflows, alarms, notifi
 - Create a Pomodoro timer from each cycle template and from manual focus/break/session input.
 - Create an interval timer from each template and from manual input.
 - Start, pause, resume, reset, duplicate, edit, and delete a timer.
+- Move timers up and down, then restart the app and confirm the order persists.
 - Confirm destructive delete actions require explicit confirmation.
 - Confirm completed timers can be restarted from their full duration.
 

@@ -51,6 +51,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileCopy
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -326,6 +328,14 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         syncRuntimeAndNotification()
     }
 
+    fun moveTimerUp(id: Long) {
+        moveTimer(id, -1)
+    }
+
+    fun moveTimerDown(id: Long) {
+        moveTimer(id, 1)
+    }
+
     fun startTimer(id: Long) {
         updateTimer(id) { item ->
             val duration = if (item.remainingMillis <= 0L) {
@@ -386,6 +396,16 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     private fun updateTimer(id: Long, transform: (TimerItem) -> TimerItem) {
         val index = timers.indexOfFirst { it.preset.id == id }
         if (index >= 0) timers[index] = transform(timers[index])
+    }
+
+    private fun moveTimer(id: Long, offset: Int) {
+        val fromIndex = timers.indexOfFirst { it.preset.id == id }
+        val toIndex = fromIndex + offset
+        if (fromIndex !in timers.indices || toIndex !in timers.indices) return
+        val timer = timers.removeAt(fromIndex)
+        timers.add(toIndex, timer)
+        saveAsync()
+        syncRuntimeAndNotification()
     }
 
     private fun ensureTicker() {
@@ -641,13 +661,18 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(viewModel.timers, key = { it.preset.id }) { timer ->
+                    val timerIndex = viewModel.timers.indexOfFirst { it.preset.id == timer.preset.id }
                     TimerCard(
                         timer = timer,
+                        canMoveUp = timerIndex > 0,
+                        canMoveDown = timerIndex >= 0 && timerIndex < viewModel.timers.lastIndex,
                         onStart = { startTimerWithPermission(timer.preset.id) },
                         onPause = { viewModel.pauseTimer(timer.preset.id) },
                         onReset = { viewModel.resetTimer(timer.preset.id) },
                         onDelete = { timerPendingDelete = timer },
                         onDuplicate = { viewModel.duplicateTimer(timer.preset.id) },
+                        onMoveUp = { viewModel.moveTimerUp(timer.preset.id) },
+                        onMoveDown = { viewModel.moveTimerDown(timer.preset.id) },
                         onEditDuration = { timerBeingEdited = timer },
                         onOpenFullScreen = { fullScreenTimerId = timer.preset.id }
                     )
@@ -1102,11 +1127,15 @@ fun EmptyFilteredHistory() {
 @Composable
 fun TimerCard(
     timer: TimerItem,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onReset: () -> Unit,
     onDelete: () -> Unit,
     onDuplicate: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
     onEditDuration: () -> Unit,
     onOpenFullScreen: () -> Unit
 ) {
@@ -1149,8 +1178,26 @@ fun TimerCard(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(
+                horizontalArrangement = Arrangement.End,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 IconButton(onClick = onEditDuration) {
                     Icon(Icons.Default.Edit, contentDescription = "Edit ${timer.preset.name}")
+                }
+                IconButton(
+                    enabled = canMoveUp,
+                    onClick = onMoveUp
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move ${timer.preset.name} up")
+                }
+                IconButton(
+                    enabled = canMoveDown,
+                    onClick = onMoveDown
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move ${timer.preset.name} down")
                 }
                 IconButton(onClick = onDuplicate) {
                     Icon(Icons.Default.FileCopy, contentDescription = "Duplicate ${timer.preset.name}")
