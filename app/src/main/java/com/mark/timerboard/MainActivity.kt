@@ -1080,6 +1080,37 @@ fun CreateTimerDialog(
                     )
                 }
                 if (mode == TIMER_MODE_COUNTDOWN) {
+                    Text(
+                        "Quick duration",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        quickCountdownPresets.take(3).forEach { preset ->
+                            QuickPresetButton(
+                                label = preset.label,
+                                onClick = {
+                                    minutes = preset.minutes.toString()
+                                    seconds = "0"
+                                    if (name.isBlank()) name = preset.label
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        quickCountdownPresets.drop(3).forEach { preset ->
+                            QuickPresetButton(
+                                label = preset.label,
+                                onClick = {
+                                    minutes = preset.minutes.toString()
+                                    seconds = "0"
+                                    if (name.isBlank()) name = preset.label
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TimeNumberField(
                             value = minutes,
@@ -1186,6 +1217,20 @@ fun CreateTimerDialog(
             }
         }
     )
+}
+
+@Composable
+fun QuickPresetButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier
+    ) {
+        Text(label)
+    }
 }
 
 @Composable
@@ -1348,6 +1393,20 @@ val timerColors = listOf(
 const val DEFAULT_ALARM_ID = "chime"
 const val TIMER_MODE_COUNTDOWN = "countdown"
 const val TIMER_MODE_INTERVAL = "interval"
+
+data class QuickCountdownPreset(
+    val label: String,
+    val minutes: Int
+)
+
+val quickCountdownPresets = listOf(
+    QuickCountdownPreset("1 min", 1),
+    QuickCountdownPreset("3 min", 3),
+    QuickCountdownPreset("5 min", 5),
+    QuickCountdownPreset("10 min", 10),
+    QuickCountdownPreset("15 min", 15),
+    QuickCountdownPreset("25 min", 25)
+)
 
 val alarmSounds = listOf(
     AlarmSound(
