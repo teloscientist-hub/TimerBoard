@@ -80,6 +80,12 @@ interface TimerHistoryDao {
     @Query("SELECT COALESCE(SUM(durationMillis), 0) FROM timer_history WHERE completedAtMillis >= :startMillis")
     suspend fun totalDurationSince(startMillis: Long): Long
 
+    @Query("SELECT COUNT(*) FROM timer_history WHERE completedAtMillis >= :startMillis AND mode = :mode")
+    suspend fun countSinceByMode(startMillis: Long, mode: String): Int
+
+    @Query("SELECT COALESCE(SUM(durationMillis), 0) FROM timer_history WHERE completedAtMillis >= :startMillis AND mode = :mode")
+    suspend fun totalDurationSinceByMode(startMillis: Long, mode: String): Long
+
     @Query("SELECT * FROM timer_history ORDER BY completedAtMillis DESC LIMIT :limit")
     suspend fun recent(limit: Int): List<TimerHistoryEntity>
 
@@ -189,6 +195,17 @@ class TimerRepository(context: Context) {
         return CompletionSummary(
             count = historyDao.countSince(startOfDayMillis),
             totalMillis = historyDao.totalDurationSince(startOfDayMillis)
+        )
+    }
+
+    suspend fun todaySummaryForMode(mode: String): CompletionSummary {
+        val startOfDayMillis = LocalDate.now()
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        return CompletionSummary(
+            count = historyDao.countSinceByMode(startOfDayMillis, mode),
+            totalMillis = historyDao.totalDurationSinceByMode(startOfDayMillis, mode)
         )
     }
 

@@ -169,6 +169,8 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         private set
     var todaySummary by mutableStateOf(CompletionSummary())
         private set
+    var pomodoroTodaySummary by mutableStateOf(CompletionSummary())
+        private set
     val historyItems = mutableStateListOf<TimerHistoryItem>()
     var isHistoryLoading by mutableStateOf(false)
         private set
@@ -243,6 +245,28 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             restMillis = restSeconds.coerceAtLeast(0) * 1000L,
             cooldownMillis = cooldownSeconds.coerceAtLeast(0) * 1000L,
             rounds = normalizedRounds
+        )
+        timers.add(0, TimerItem(preset))
+        saveAsync()
+        syncRuntimeAndNotification()
+    }
+
+    fun addPomodoroTimer(
+        name: String,
+        minutes: Int,
+        color: Long,
+        alarmId: String,
+        alarmUri: String?
+    ) {
+        val duration = minutes.coerceAtLeast(1) * 60_000L
+        val preset = TimerPreset(
+            id = System.currentTimeMillis(),
+            name = name.ifBlank { "Pomodoro" },
+            durationMillis = duration,
+            color = color,
+            alarmId = alarmById(alarmId).id,
+            alarmUri = alarmUri,
+            mode = TIMER_MODE_POMODORO
         )
         timers.add(0, TimerItem(preset))
         saveAsync()
@@ -414,6 +438,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
 
     private suspend fun refreshTodaySummary() {
         todaySummary = repository.todaySummary()
+        pomodoroTodaySummary = repository.todaySummaryForMode(TIMER_MODE_POMODORO)
     }
 
     private suspend fun refreshHistoryItems() {
@@ -532,6 +557,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     if (showHistory) {
         HistoryScreen(
             summary = viewModel.todaySummary,
+            pomodoroSummary = viewModel.pomodoroTodaySummary,
             items = viewModel.historyItems,
             isLoading = viewModel.isHistoryLoading,
             onBack = { showHistory = false },
@@ -626,6 +652,10 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                 viewModel.addTimer(name, minutes, seconds, color, alarmId, alarmUri)
                 showCreateDialog = false
             },
+            onCreatePomodoro = { name, minutes, color, alarmId, alarmUri ->
+                viewModel.addPomodoroTimer(name, minutes, color, alarmId, alarmUri)
+                showCreateDialog = false
+            },
             onCreateInterval = { name, warmup, work, rest, cooldown, rounds, color, alarmId, alarmUri ->
                 viewModel.addIntervalTimer(
                     name = name,
@@ -696,6 +726,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
 @Composable
 fun HistoryScreen(
     summary: CompletionSummary,
+    pomodoroSummary: CompletionSummary,
     items: List<TimerHistoryItem>,
     isLoading: Boolean,
     onBack: () -> Unit,
@@ -760,7 +791,7 @@ fun HistoryScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
-                    HistorySummaryCard(summary)
+                    HistorySummaryCard(summary, pomodoroSummary)
                 }
                 items(items, key = { it.id }) { history ->
                     HistoryItemCard(history)
@@ -794,7 +825,7 @@ fun HistoryScreen(
 }
 
 @Composable
-fun HistorySummaryCard(summary: CompletionSummary) {
+fun HistorySummaryCard(summary: CompletionSummary, pomodoroSummary: CompletionSummary) {
     Card(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -817,6 +848,25 @@ fun HistorySummaryCard(summary: CompletionSummary) {
                 HistoryMetric(
                     label = "Total time",
                     value = summary.totalMillis.formatTimer(),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "Pomodoro",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                HistoryMetric(
+                    label = "Sessions",
+                    value = pomodoroSummary.count.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+                HistoryMetric(
+                    label = "Focus time",
+                    value = pomodoroSummary.totalMillis.formatTimer(),
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -844,7 +894,7 @@ fun HistoryMetric(label: String, value: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun HistoryItemCard(history: TimerHistoryItem) {
-    val modeLabel = if (history.mode == TIMER_MODE_INTERVAL) "Interval" else "Countdown"
+    val modeLabel = modeLabel(history.mode)
 
     Card(
         shape = RoundedCornerShape(8.dp),
@@ -926,7 +976,7 @@ fun TimerCard(
         .coerceIn(0f, 1f)
     val accent = Color(timer.preset.color)
     val phaseText = timer.intervalPhaseText()
-    val modeLabel = if (timer.preset.mode == TIMER_MODE_INTERVAL) "Interval" else "Countdown"
+    val modeLabel = modeLabel(timer.preset.mode)
     val isComplete = !timer.isRunning && timer.remainingMillis == 0L
 
     Card(
@@ -1340,12 +1390,14 @@ fun EditDurationDialog(
 fun CreateTimerDialog(
     onDismiss: () -> Unit,
     onCreateCountdown: (String, Int, Int, Long, String, String?) -> Unit,
+    onCreatePomodoro: (String, Int, Long, String, String?) -> Unit,
     onCreateInterval: (String, Int, Int, Int, Int, Int, Long, String, String?) -> Unit
 ) {
     var mode by remember { mutableStateOf(TIMER_MODE_COUNTDOWN) }
     var name by remember { mutableStateOf("") }
     var minutes by remember { mutableStateOf("5") }
     var seconds by remember { mutableStateOf("0") }
+    var pomodoroMinutes by remember { mutableStateOf("25") }
     var warmupSeconds by remember { mutableStateOf("30") }
     var workSeconds by remember { mutableStateOf("45") }
     var restSeconds by remember { mutableStateOf("15") }
@@ -1375,10 +1427,18 @@ fun CreateTimerDialog(
                         modifier = Modifier.weight(1f)
                     )
                     ModeButton(
+                        text = "Pomodoro",
+                        selected = mode == TIMER_MODE_POMODORO,
+                        onClick = { mode = TIMER_MODE_POMODORO },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ModeButton(
                         text = "Interval",
                         selected = mode == TIMER_MODE_INTERVAL,
                         onClick = { mode = TIMER_MODE_INTERVAL },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
                 if (mode == TIMER_MODE_COUNTDOWN) {
@@ -1427,6 +1487,30 @@ fun CreateTimerDialog(
                             modifier = Modifier.weight(1f)
                         )
                     }
+                } else if (mode == TIMER_MODE_POMODORO) {
+                    Text(
+                        "Pomodoro template",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        pomodoroTemplates.forEach { template ->
+                            QuickPresetButton(
+                                label = template.label,
+                                onClick = {
+                                    pomodoroMinutes = template.minutes.toString()
+                                    if (name.isBlank()) name = template.label
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    TimeNumberField(
+                        value = pomodoroMinutes,
+                        onValueChange = { pomodoroMinutes = it.filter(Char::isDigit).take(3) },
+                        label = "Focus minutes",
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 } else {
                     Text(
                         "Interval templates",
@@ -1528,6 +1612,14 @@ fun CreateTimerDialog(
                             name.trim(),
                             minutes.toIntOrNull() ?: 0,
                             (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
+                            selectedColor,
+                            selectedAlarmId,
+                            selectedAlarmUri
+                        )
+                    } else if (mode == TIMER_MODE_POMODORO) {
+                        onCreatePomodoro(
+                            name.trim(),
+                            pomodoroMinutes.toIntOrNull() ?: 25,
                             selectedColor,
                             selectedAlarmId,
                             selectedAlarmUri
@@ -1732,6 +1824,15 @@ val timerColors = listOf(
 const val DEFAULT_ALARM_ID = "chime"
 const val TIMER_MODE_COUNTDOWN = "countdown"
 const val TIMER_MODE_INTERVAL = "interval"
+const val TIMER_MODE_POMODORO = "pomodoro"
+
+fun modeLabel(mode: String): String {
+    return when (mode) {
+        TIMER_MODE_INTERVAL -> "Interval"
+        TIMER_MODE_POMODORO -> "Pomodoro"
+        else -> "Countdown"
+    }
+}
 
 data class QuickCountdownPreset(
     val label: String,
@@ -1745,6 +1846,17 @@ val quickCountdownPresets = listOf(
     QuickCountdownPreset("10 min", 10),
     QuickCountdownPreset("15 min", 15),
     QuickCountdownPreset("25 min", 25)
+)
+
+data class PomodoroTemplate(
+    val label: String,
+    val minutes: Int
+)
+
+val pomodoroTemplates = listOf(
+    PomodoroTemplate("Classic 25", 25),
+    PomodoroTemplate("Short 15", 15),
+    PomodoroTemplate("Deep 50", 50)
 )
 
 data class IntervalTemplate(
