@@ -5,7 +5,6 @@ import android.app.Application
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.Ringtone
@@ -93,8 +92,6 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -162,51 +159,6 @@ data class ToneEvent(
     val durationMillis: Int
 )
 
-class TimerRepository(context: Context) {
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("timer_board", Context.MODE_PRIVATE)
-
-    fun loadPresets(): List<TimerPreset> {
-        val raw = prefs.getString("presets", null) ?: return defaultPresets()
-        return runCatching {
-            val array = JSONArray(raw)
-            List(array.length()) { index ->
-                val item = array.getJSONObject(index)
-                TimerPreset(
-                    id = item.getLong("id"),
-                    name = item.getString("name"),
-                    durationMillis = item.getLong("durationMillis"),
-                    color = item.getLong("color"),
-                    alarmId = alarmById(item.optString("alarmId", DEFAULT_ALARM_ID)).id,
-                    alarmUri = item.optString("alarmUri", "").ifBlank { null }
-                )
-            }
-        }.getOrDefault(defaultPresets())
-    }
-
-    fun savePresets(presets: List<TimerPreset>) {
-        val array = JSONArray()
-        presets.forEach { preset ->
-            array.put(
-                JSONObject()
-                    .put("id", preset.id)
-                    .put("name", preset.name)
-                    .put("durationMillis", preset.durationMillis)
-                    .put("color", preset.color)
-                    .put("alarmId", preset.alarmId)
-                    .put("alarmUri", preset.alarmUri.orEmpty())
-            )
-        }
-        prefs.edit().putString("presets", array.toString()).apply()
-    }
-
-    private fun defaultPresets(): List<TimerPreset> = listOf(
-        TimerPreset(1L, "Coffee", 4.minutes, 0xFF8B5E3C, "chime"),
-        TimerPreset(2L, "Stretch", 10.minutes, 0xFF2F7D69, "soft"),
-        TimerPreset(3L, "Focus", 25.minutes, 0xFF365D8C, "chime")
-    )
-}
-
 class TimerBoardViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val repository = TimerRepository(application)
@@ -216,7 +168,10 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     val timers = mutableStateListOf<TimerItem>()
 
     init {
-        timers.addAll(repository.loadPresets().map { TimerItem(it) })
+        viewModelScope.launch {
+            timers.addAll(repository.loadPresets().map { TimerItem(it) })
+            syncActiveTimerNotification()
+        }
         TimerCommandBus.register(
             onPauseAll = ::pauseAll,
             onResetAll = ::resetAll
@@ -241,7 +196,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             alarmUri = alarmUri
         )
         timers.add(0, TimerItem(preset))
-        save()
+        saveAsync()
         syncActiveTimerNotification()
     }
 
@@ -266,13 +221,13 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                 endElapsedRealtime = 0L
             )
         }
-        save()
+        saveAsync()
         syncActiveTimerNotification()
     }
 
     fun deleteTimer(id: Long) {
         timers.removeAll { it.preset.id == id }
-        save()
+        saveAsync()
         syncActiveTimerNotification()
     }
 
@@ -354,8 +309,11 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun save() {
-        repository.savePresets(timers.map { it.preset })
+    private fun saveAsync() {
+        val presets = timers.map { it.preset }
+        viewModelScope.launch {
+            repository.savePresets(presets)
+        }
     }
 
     private fun syncActiveTimerNotification() {
