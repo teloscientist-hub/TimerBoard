@@ -217,6 +217,10 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         timers.addAll(repository.loadPresets().map { TimerItem(it) })
+        TimerCommandBus.register(
+            onPauseAll = ::pauseAll,
+            onResetAll = ::resetAll
+        )
     }
 
     fun addTimer(
@@ -313,6 +317,10 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         timers.forEach { pauseTimer(it.preset.id) }
     }
 
+    fun resetAll() {
+        timers.forEach { resetTimer(it.preset.id) }
+    }
+
     private fun updateTimer(id: Long, transform: (TimerItem) -> TimerItem) {
         val index = timers.indexOfFirst { it.preset.id == id }
         if (index >= 0) timers[index] = transform(timers[index])
@@ -356,6 +364,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
 
     override fun onCleared() {
         syncActiveTimerNotification()
+        TimerCommandBus.clear()
         alertPlayer.release()
         super.onCleared()
     }

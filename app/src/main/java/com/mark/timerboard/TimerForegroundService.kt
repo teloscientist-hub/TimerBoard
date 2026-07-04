@@ -36,6 +36,12 @@ class TimerForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> stopTimerService()
+            ACTION_PAUSE_ALL -> {
+                if (!TimerCommandBus.pauseAll()) stopTimerService()
+            }
+            ACTION_RESET_ALL -> {
+                if (!TimerCommandBus.resetAll()) stopTimerService()
+            }
             ACTION_START_OR_UPDATE -> {
                 runningCount = intent.getIntExtra(EXTRA_RUNNING_COUNT, 0)
                 nextTimerName = intent.getStringExtra(EXTRA_NEXT_TIMER_NAME).orEmpty()
@@ -83,6 +89,16 @@ class TimerForegroundService : Service() {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$text\n$detail"))
             .setContentIntent(openAppIntent())
+            .addAction(
+                android.R.drawable.ic_media_pause,
+                "Pause all",
+                serviceActionIntent(ACTION_PAUSE_ALL, 1)
+            )
+            .addAction(
+                android.R.drawable.ic_menu_revert,
+                "Reset all",
+                serviceActionIntent(ACTION_RESET_ALL, 2)
+            )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -97,6 +113,18 @@ class TimerForegroundService : Service() {
         return PendingIntent.getActivity(
             this,
             0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun serviceActionIntent(action: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, TimerForegroundService::class.java).apply {
+            this.action = action
+        }
+        return PendingIntent.getService(
+            this,
+            requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -122,6 +150,8 @@ class TimerForegroundService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val ACTION_START_OR_UPDATE = "com.mark.timerboard.START_OR_UPDATE"
         private const val ACTION_STOP = "com.mark.timerboard.STOP"
+        private const val ACTION_PAUSE_ALL = "com.mark.timerboard.PAUSE_ALL"
+        private const val ACTION_RESET_ALL = "com.mark.timerboard.RESET_ALL"
         private const val EXTRA_RUNNING_COUNT = "running_count"
         private const val EXTRA_NEXT_TIMER_NAME = "next_timer_name"
         private const val EXTRA_NEXT_END_WALL_TIME = "next_end_wall_time"
