@@ -253,12 +253,19 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
 
     fun addPomodoroTimer(
         name: String,
-        minutes: Int,
+        focusMinutes: Int,
+        breakMinutes: Int,
+        sessions: Int,
+        longBreakMinutes: Int,
         color: Long,
         alarmId: String,
         alarmUri: String?
     ) {
-        val duration = minutes.coerceAtLeast(1) * 60_000L
+        val normalizedSessions = sessions.coerceAtLeast(1)
+        val focusMillis = focusMinutes.coerceAtLeast(1) * 60_000L
+        val breakMillis = breakMinutes.coerceAtLeast(0) * 60_000L
+        val longBreakMillis = longBreakMinutes.coerceAtLeast(0) * 60_000L
+        val duration = (focusMillis + breakMillis) * normalizedSessions + longBreakMillis
         val preset = TimerPreset(
             id = System.currentTimeMillis(),
             name = name.ifBlank { "Pomodoro" },
@@ -266,7 +273,11 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             color = color,
             alarmId = alarmById(alarmId).id,
             alarmUri = alarmUri,
-            mode = TIMER_MODE_POMODORO
+            mode = TIMER_MODE_POMODORO,
+            workMillis = focusMillis,
+            restMillis = breakMillis,
+            cooldownMillis = longBreakMillis,
+            rounds = normalizedSessions
         )
         timers.add(0, TimerItem(preset))
         saveAsync()
@@ -652,8 +663,17 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                 viewModel.addTimer(name, minutes, seconds, color, alarmId, alarmUri)
                 showCreateDialog = false
             },
-            onCreatePomodoro = { name, minutes, color, alarmId, alarmUri ->
-                viewModel.addPomodoroTimer(name, minutes, color, alarmId, alarmUri)
+            onCreatePomodoro = { name, focusMinutes, breakMinutes, sessions, longBreakMinutes, color, alarmId, alarmUri ->
+                viewModel.addPomodoroTimer(
+                    name = name,
+                    focusMinutes = focusMinutes,
+                    breakMinutes = breakMinutes,
+                    sessions = sessions,
+                    longBreakMinutes = longBreakMinutes,
+                    color = color,
+                    alarmId = alarmId,
+                    alarmUri = alarmUri
+                )
                 showCreateDialog = false
             },
             onCreateInterval = { name, warmup, work, rest, cooldown, rounds, color, alarmId, alarmUri ->
@@ -1084,7 +1104,7 @@ fun TimerCard(
                     Text("Reset")
                 }
             }
-            if (timer.preset.mode == TIMER_MODE_INTERVAL) {
+            if (timer.preset.mode == TIMER_MODE_INTERVAL || timer.preset.mode == TIMER_MODE_POMODORO) {
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = onOpenFullScreen,
@@ -1167,7 +1187,7 @@ fun IntervalFullScreenView(
     val accent = Color(timer.preset.color)
     val totalDuration = timer.preset.totalDurationMillis()
     val progress = 1f - (timer.remainingMillis.toFloat() / totalDuration.toFloat()).coerceIn(0f, 1f)
-    val phaseText = timer.intervalPhaseText() ?: "Interval"
+    val phaseText = timer.intervalPhaseText() ?: modeLabel(timer.preset.mode)
 
     Surface(
         color = MaterialTheme.colorScheme.background,
@@ -1390,14 +1410,17 @@ fun EditDurationDialog(
 fun CreateTimerDialog(
     onDismiss: () -> Unit,
     onCreateCountdown: (String, Int, Int, Long, String, String?) -> Unit,
-    onCreatePomodoro: (String, Int, Long, String, String?) -> Unit,
+    onCreatePomodoro: (String, Int, Int, Int, Int, Long, String, String?) -> Unit,
     onCreateInterval: (String, Int, Int, Int, Int, Int, Long, String, String?) -> Unit
 ) {
     var mode by remember { mutableStateOf(TIMER_MODE_COUNTDOWN) }
     var name by remember { mutableStateOf("") }
     var minutes by remember { mutableStateOf("5") }
     var seconds by remember { mutableStateOf("0") }
-    var pomodoroMinutes by remember { mutableStateOf("25") }
+    var pomodoroFocusMinutes by remember { mutableStateOf("25") }
+    var pomodoroBreakMinutes by remember { mutableStateOf("5") }
+    var pomodoroSessions by remember { mutableStateOf("4") }
+    var pomodoroLongBreakMinutes by remember { mutableStateOf("15") }
     var warmupSeconds by remember { mutableStateOf("30") }
     var workSeconds by remember { mutableStateOf("45") }
     var restSeconds by remember { mutableStateOf("15") }
@@ -1498,19 +1521,44 @@ fun CreateTimerDialog(
                             QuickPresetButton(
                                 label = template.label,
                                 onClick = {
-                                    pomodoroMinutes = template.minutes.toString()
+                                    pomodoroFocusMinutes = template.focusMinutes.toString()
+                                    pomodoroBreakMinutes = template.breakMinutes.toString()
+                                    pomodoroSessions = template.sessions.toString()
+                                    pomodoroLongBreakMinutes = template.longBreakMinutes.toString()
                                     if (name.isBlank()) name = template.label
                                 },
                                 modifier = Modifier.weight(1f)
                             )
                         }
                     }
-                    TimeNumberField(
-                        value = pomodoroMinutes,
-                        onValueChange = { pomodoroMinutes = it.filter(Char::isDigit).take(3) },
-                        label = "Focus minutes",
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TimeNumberField(
+                            value = pomodoroFocusMinutes,
+                            onValueChange = { pomodoroFocusMinutes = it.filter(Char::isDigit).take(3) },
+                            label = "Focus min",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TimeNumberField(
+                            value = pomodoroBreakMinutes,
+                            onValueChange = { pomodoroBreakMinutes = it.filter(Char::isDigit).take(3) },
+                            label = "Break min",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TimeNumberField(
+                            value = pomodoroSessions,
+                            onValueChange = { pomodoroSessions = it.filter(Char::isDigit).take(2) },
+                            label = "Sessions",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TimeNumberField(
+                            value = pomodoroLongBreakMinutes,
+                            onValueChange = { pomodoroLongBreakMinutes = it.filter(Char::isDigit).take(3) },
+                            label = "Long break min",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 } else {
                     Text(
                         "Interval templates",
@@ -1619,7 +1667,10 @@ fun CreateTimerDialog(
                     } else if (mode == TIMER_MODE_POMODORO) {
                         onCreatePomodoro(
                             name.trim(),
-                            pomodoroMinutes.toIntOrNull() ?: 25,
+                            pomodoroFocusMinutes.toIntOrNull() ?: 25,
+                            pomodoroBreakMinutes.toIntOrNull() ?: 5,
+                            pomodoroSessions.toIntOrNull() ?: 4,
+                            pomodoroLongBreakMinutes.toIntOrNull() ?: 15,
                             selectedColor,
                             selectedAlarmId,
                             selectedAlarmUri
@@ -1850,13 +1901,16 @@ val quickCountdownPresets = listOf(
 
 data class PomodoroTemplate(
     val label: String,
-    val minutes: Int
+    val focusMinutes: Int,
+    val breakMinutes: Int,
+    val sessions: Int,
+    val longBreakMinutes: Int
 )
 
 val pomodoroTemplates = listOf(
-    PomodoroTemplate("Classic 25", 25),
-    PomodoroTemplate("Short 15", 15),
-    PomodoroTemplate("Deep 50", 50)
+    PomodoroTemplate("Classic", 25, 5, 4, 15),
+    PomodoroTemplate("Short", 15, 3, 4, 10),
+    PomodoroTemplate("Deep", 50, 10, 2, 20)
 )
 
 data class IntervalTemplate(
@@ -1932,7 +1986,8 @@ val Int.minutes: Long
     get() = this * 60_000L
 
 fun TimerPreset.totalDurationMillis(): Long {
-    if (mode != TIMER_MODE_INTERVAL) return durationMillis.coerceAtLeast(1_000L)
+    if (mode == TIMER_MODE_POMODORO && workMillis <= 0L) return durationMillis.coerceAtLeast(1_000L)
+    if (mode != TIMER_MODE_INTERVAL && mode != TIMER_MODE_POMODORO) return durationMillis.coerceAtLeast(1_000L)
     return intervalDurationMillis(
         warmupSeconds = (warmupMillis / 1000L).toInt(),
         workSeconds = (workMillis / 1000L).toInt(),
@@ -1959,8 +2014,9 @@ fun intervalDurationMillis(
 
 fun TimerItem.intervalPhaseText(): String? {
     val preset = preset
-    if (preset.mode != TIMER_MODE_INTERVAL) return null
+    if (preset.mode != TIMER_MODE_INTERVAL && preset.mode != TIMER_MODE_POMODORO) return null
     if (!isRunning && remainingMillis == 0L) return "Complete"
+    if (preset.mode == TIMER_MODE_POMODORO && preset.workMillis <= 0L) return null
 
     var elapsedMillis = (preset.totalDurationMillis() - remainingMillis).coerceAtLeast(0L)
     if (preset.warmupMillis > 0L) {
@@ -1977,14 +2033,27 @@ fun TimerItem.intervalPhaseText(): String? {
     if (elapsedMillis < intervalMillis) {
         val roundIndex = (elapsedMillis / roundMillis).toInt().coerceIn(0, rounds - 1)
         val roundElapsed = elapsedMillis % roundMillis
-        val phase = if (roundElapsed < workMillis || restMillis == 0L) "Work" else "Rest"
+        val phase = when {
+            preset.mode == TIMER_MODE_POMODORO && (roundElapsed < workMillis || restMillis == 0L) -> "Focus"
+            preset.mode == TIMER_MODE_POMODORO -> "Break"
+            roundElapsed < workMillis || restMillis == 0L -> "Work"
+            else -> "Rest"
+        }
         return "$phase round ${roundIndex + 1} of $rounds"
     }
 
-    return if (preset.cooldownMillis > 0L) "Cooldown" else "Finishing"
+    return if (preset.cooldownMillis > 0L) {
+        if (preset.mode == TIMER_MODE_POMODORO) "Long break" else "Cooldown"
+    } else {
+        "Finishing"
+    }
 }
 
 fun TimerPreset.intervalSummary(): String {
+    if (mode == TIMER_MODE_POMODORO && workMillis > 0L) {
+        return "Focus ${(workMillis / 60_000L)}m | Break ${(restMillis / 60_000L)}m | " +
+            "Long break ${(cooldownMillis / 60_000L)}m | ${rounds.coerceAtLeast(1)} sessions"
+    }
     if (mode != TIMER_MODE_INTERVAL) return ""
     return "Warmup ${(warmupMillis / 1000L)}s | Work ${(workMillis / 1000L)}s | " +
         "Rest ${(restMillis / 1000L)}s | Cooldown ${(cooldownMillis / 1000L)}s | " +

@@ -4,12 +4,12 @@ TimerBoard is a local-first Android timer app built with Kotlin and Jetpack Comp
 
 ## Current version
 
-Version: `2.1`
+Version: `2.2`
 
 - Saved countdown timers
-- Saved Pomodoro timers with 15, 25, and 50 minute focus templates
+- Saved Pomodoro timers with focus, break, session, and long-break cycles
 - Saved interval timers with warmup, work, rest, cooldown, and rounds
-- Full-screen interval phase display
+- Full-screen interval and Pomodoro phase display
 - Default starter timers: Coffee, Stretch, Focus
 - Create timers with a name, duration, and color
 - Tap a timer's time display to edit hours, minutes, and seconds
@@ -32,6 +32,7 @@ Version: `2.1`
 - Daily completed-timer count and total completed time are shown in the app status line
 - Dedicated history screen with recent completions, today summary, refresh, and clear-history confirmation
 - Pomodoro sessions have dedicated daily session and focus-time reporting in History
+- Pomodoro templates include Classic, Short, and Deep cycle presets
 - Completion tone and vibration
 
 ## Open in Android Studio
@@ -60,5 +61,5 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradle
 
 ## Suggested next steps
 
-1. Add Pomodoro work/break cycles.
-2. Add history filtering and export.
+1. Add history filtering and export.
+2. Add timer ordering.

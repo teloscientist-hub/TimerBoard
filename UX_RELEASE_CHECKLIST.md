@@ -5,7 +5,7 @@ Use this checklist before app releases that affect UI, workflows, alarms, notifi
 ## Core Workflows
 
 - Create a countdown timer from a quick preset and from manual input.
-- Create a Pomodoro timer from each focus template and from manual input.
+- Create a Pomodoro timer from each cycle template and from manual focus/break/session input.
 - Create an interval timer from each template and from manual input.
 - Start, pause, resume, reset, duplicate, edit, and delete a timer.
 - Confirm destructive delete actions require explicit confirmation.
@@ -20,6 +20,7 @@ Use this checklist before app releases that affect UI, workflows, alarms, notifi
 - Confirm a completed timer records history once.
 - Open History and confirm recent completions show newest first.
 - Confirm Pomodoro completions update the History Pomodoro session and focus-time metrics.
+- Confirm Pomodoro full-screen mode shows focus, break, and long-break phases.
 - Clear History and confirm the destructive action requires confirmation.
 
 ## Accessibility And Layout
