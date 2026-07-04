@@ -42,6 +42,9 @@ class TimerForegroundService : Service() {
             ACTION_RESET_ALL -> {
                 if (!TimerCommandBus.resetAll()) stopTimerService()
             }
+            ACTION_RESUME_ALL -> {
+                if (!TimerCommandBus.resumeAll()) stopTimerService()
+            }
             ACTION_START_OR_UPDATE -> {
                 runningCount = intent.getIntExtra(EXTRA_RUNNING_COUNT, 0)
                 nextTimerName = intent.getStringExtra(EXTRA_NEXT_TIMER_NAME).orEmpty()
@@ -95,9 +98,14 @@ class TimerForegroundService : Service() {
                 serviceActionIntent(ACTION_PAUSE_ALL, 1)
             )
             .addAction(
+                android.R.drawable.ic_media_play,
+                "Resume all",
+                serviceActionIntent(ACTION_RESUME_ALL, 2)
+            )
+            .addAction(
                 android.R.drawable.ic_menu_revert,
                 "Reset all",
-                serviceActionIntent(ACTION_RESET_ALL, 2)
+                serviceActionIntent(ACTION_RESET_ALL, 3)
             )
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -152,6 +160,7 @@ class TimerForegroundService : Service() {
         private const val ACTION_STOP = "com.mark.timerboard.STOP"
         private const val ACTION_PAUSE_ALL = "com.mark.timerboard.PAUSE_ALL"
         private const val ACTION_RESET_ALL = "com.mark.timerboard.RESET_ALL"
+        private const val ACTION_RESUME_ALL = "com.mark.timerboard.RESUME_ALL"
         private const val EXTRA_RUNNING_COUNT = "running_count"
         private const val EXTRA_NEXT_TIMER_NAME = "next_timer_name"
         private const val EXTRA_NEXT_END_WALL_TIME = "next_end_wall_time"

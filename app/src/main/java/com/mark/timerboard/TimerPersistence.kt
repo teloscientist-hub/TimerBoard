@@ -13,6 +13,9 @@ import androidx.room.RoomDatabase
 import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 import org.json.JSONArray
+import org.json.JSONObject
+import java.time.LocalDate
+import java.time.ZoneId
 
 @Entity(tableName = "timer_presets")
 data class TimerPresetEntity(
@@ -31,6 +34,21 @@ data class TimerPresetEntity(
     val rounds: Int
 )
 
+@Entity(tableName = "timer_history")
+data class TimerHistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+    val presetId: Long,
+    val name: String,
+    val completedAtMillis: Long,
+    val durationMillis: Long,
+    val mode: String
+)
+
+data class CompletionSummary(
+    val count: Int = 0,
+    val totalMillis: Long = 0L
+)
+
 @Dao
 interface TimerPresetDao {
     @Query("SELECT * FROM timer_presets ORDER BY sortOrder ASC")
@@ -43,13 +61,26 @@ interface TimerPresetDao {
     suspend fun insertAll(presets: List<TimerPresetEntity>)
 }
 
+@Dao
+interface TimerHistoryDao {
+    @Insert
+    suspend fun insert(history: TimerHistoryEntity)
+
+    @Query("SELECT COUNT(*) FROM timer_history WHERE completedAtMillis >= :startMillis")
+    suspend fun countSince(startMillis: Long): Int
+
+    @Query("SELECT COALESCE(SUM(durationMillis), 0) FROM timer_history WHERE completedAtMillis >= :startMillis")
+    suspend fun totalDurationSince(startMillis: Long): Long
+}
+
 @Database(
-    entities = [TimerPresetEntity::class],
-    version = 2,
+    entities = [TimerPresetEntity::class, TimerHistoryEntity::class],
+    version = 3,
     exportSchema = false
 )
 abstract class TimerBoardDatabase : RoomDatabase() {
     abstract fun timerPresetDao(): TimerPresetDao
+    abstract fun timerHistoryDao(): TimerHistoryDao
 
     companion object {
         @Volatile
@@ -61,7 +92,7 @@ abstract class TimerBoardDatabase : RoomDatabase() {
                     context.applicationContext,
                     TimerBoardDatabase::class.java,
                     "timer_board.db"
-                ).addMigrations(MIGRATION_1_2)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build()
                     .also { instance = it }
             }
@@ -77,6 +108,23 @@ abstract class TimerBoardDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE timer_presets ADD COLUMN rounds INTEGER NOT NULL DEFAULT 1")
             }
         }
+
+        private val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS timer_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        presetId INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        completedAtMillis INTEGER NOT NULL,
+                        durationMillis INTEGER NOT NULL,
+                        mode TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
     }
 }
 
@@ -84,6 +132,7 @@ class TimerRepository(context: Context) {
     private val appContext = context.applicationContext
     private val database = TimerBoardDatabase.get(appContext)
     private val dao = database.timerPresetDao()
+    private val historyDao = database.timerHistoryDao()
     private val prefs = appContext.getSharedPreferences("timer_board", Context.MODE_PRIVATE)
 
     suspend fun loadPresets(): List<TimerPreset> {
@@ -104,6 +153,98 @@ class TimerRepository(context: Context) {
             dao.insertAll(presets.mapIndexed { index, preset -> preset.toEntity(index) })
         }
         prefs.edit().putBoolean(KEY_ROOM_INITIALIZED, true).apply()
+    }
+
+    suspend fun recordCompletion(preset: TimerPreset) {
+        historyDao.insert(
+            TimerHistoryEntity(
+                presetId = preset.id,
+                name = preset.name,
+                completedAtMillis = System.currentTimeMillis(),
+                durationMillis = preset.totalDurationMillis(),
+                mode = preset.mode
+            )
+        )
+    }
+
+    suspend fun todaySummary(): CompletionSummary {
+        val startOfDayMillis = LocalDate.now()
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        return CompletionSummary(
+            count = historyDao.countSince(startOfDayMillis),
+            totalMillis = historyDao.totalDurationSince(startOfDayMillis)
+        )
+    }
+
+    fun restoreRuntimeState(presets: List<TimerPreset>): List<TimerItem> {
+        val snapshots = loadRuntimeSnapshots()
+        val nowWallTime = System.currentTimeMillis()
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        return presets.map { preset ->
+            val snapshot = snapshots[preset.id] ?: return@map TimerItem(preset)
+            val total = preset.totalDurationMillis()
+            val remaining = when {
+                snapshot.isRunning && snapshot.endWallTimeMillis > nowWallTime ->
+                    snapshot.endWallTimeMillis - nowWallTime
+                snapshot.isRunning -> 0L
+                else -> snapshot.remainingMillis
+            }.coerceIn(0L, total)
+            TimerItem(
+                preset = preset,
+                remainingMillis = remaining,
+                isRunning = snapshot.isRunning && remaining > 0L,
+                endElapsedRealtime = if (snapshot.isRunning && remaining > 0L) {
+                    nowElapsed + remaining
+                } else {
+                    0L
+                }
+            )
+        }
+    }
+
+    fun saveRuntimeState(timers: List<TimerItem>) {
+        val nowWallTime = System.currentTimeMillis()
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        val array = JSONArray()
+        timers.filter { timer ->
+            timer.isRunning || timer.remainingMillis != timer.preset.totalDurationMillis()
+        }.forEach { timer ->
+            val remaining = if (timer.isRunning) {
+                (timer.endElapsedRealtime - nowElapsed).coerceAtLeast(0L)
+            } else {
+                timer.remainingMillis
+            }
+            array.put(
+                JSONObject()
+                    .put("id", timer.preset.id)
+                    .put("remainingMillis", remaining)
+                    .put("isRunning", timer.isRunning)
+                    .put("endWallTimeMillis", if (timer.isRunning) nowWallTime + remaining else 0L)
+            )
+        }
+        prefs.edit().putString(KEY_RUNTIME_STATE, array.toString()).apply()
+    }
+
+    private fun loadRuntimeSnapshots(): Map<Long, RuntimeSnapshot> {
+        val raw = prefs.getString(KEY_RUNTIME_STATE, null) ?: return emptyMap()
+        return runCatching {
+            val array = JSONArray(raw)
+            buildMap {
+                repeat(array.length()) { index ->
+                    val item = array.getJSONObject(index)
+                    put(
+                        item.getLong("id"),
+                        RuntimeSnapshot(
+                            remainingMillis = item.getLong("remainingMillis"),
+                            isRunning = item.getBoolean("isRunning"),
+                            endWallTimeMillis = item.optLong("endWallTimeMillis", 0L)
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyMap())
     }
 
     private fun loadLegacyPresets(): List<TimerPreset> {
@@ -168,5 +309,12 @@ class TimerRepository(context: Context) {
 
     private companion object {
         const val KEY_ROOM_INITIALIZED = "room_initialized"
+        const val KEY_RUNTIME_STATE = "runtime_state"
     }
 }
+
+private data class RuntimeSnapshot(
+    val remainingMillis: Long,
+    val isRunning: Boolean,
+    val endWallTimeMillis: Long
+)

@@ -165,16 +165,22 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     val timers = mutableStateListOf<TimerItem>()
     var isLoading by mutableStateOf(true)
         private set
+    var todaySummary by mutableStateOf(CompletionSummary())
+        private set
 
     init {
         viewModelScope.launch {
-            timers.addAll(repository.loadPresets().map { TimerItem(it) })
+            val presets = repository.loadPresets()
+            timers.addAll(repository.restoreRuntimeState(presets))
+            refreshTodaySummary()
             isLoading = false
-            syncActiveTimerNotification()
+            ensureTicker()
+            syncRuntimeAndNotification()
         }
         TimerCommandBus.register(
             onPauseAll = ::pauseAll,
-            onResetAll = ::resetAll
+            onResetAll = ::resetAll,
+            onResumeAll = ::resumeAll
         )
     }
 
@@ -197,7 +203,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         )
         timers.add(0, TimerItem(preset))
         saveAsync()
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
     }
 
     fun addIntervalTimer(
@@ -234,7 +240,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         )
         timers.add(0, TimerItem(preset))
         saveAsync()
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
     }
 
     fun updateTimerDuration(
@@ -259,13 +265,13 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
         saveAsync()
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
     }
 
     fun deleteTimer(id: Long) {
         timers.removeAll { it.preset.id == id }
         saveAsync()
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
     }
 
     fun duplicateTimer(id: Long) {
@@ -276,7 +282,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         )
         timers.add(0, TimerItem(duplicatePreset))
         saveAsync()
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
     }
 
     fun startTimer(id: Long) {
@@ -293,7 +299,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
         ensureTicker()
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
     }
 
     fun pauseTimer(id: Long) {
@@ -304,7 +310,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                 endElapsedRealtime = 0L
             )
         }
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
     }
 
     fun resetTimer(id: Long) {
@@ -315,7 +321,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                 endElapsedRealtime = 0L
             )
         }
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
     }
 
     fun startAll() {
@@ -328,6 +334,12 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
 
     fun resetAll() {
         timers.forEach { resetTimer(it.preset.id) }
+    }
+
+    fun resumeAll() {
+        timers
+            .filter { !it.isRunning && it.remainingMillis in 1L until it.preset.totalDurationMillis() }
+            .forEach { startTimer(it.preset.id) }
     }
 
     private fun updateTimer(id: Long, transform: (TimerItem) -> TimerItem) {
@@ -350,16 +362,17 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                         )
                         if (remaining == 0L) {
                             didFinishTimer = true
+                            recordCompletion(item.preset)
                             alertPlayer.play(item.preset.alarmId, item.preset.alarmUri)
                         }
                     }
                 }
                 if (didFinishTimer) {
-                    syncActiveTimerNotification()
+                    syncRuntimeAndNotification()
                 }
                 delay(250L)
             }
-            syncActiveTimerNotification()
+            syncRuntimeAndNotification()
         }
     }
 
@@ -370,12 +383,24 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private fun syncActiveTimerNotification() {
+    private fun recordCompletion(preset: TimerPreset) {
+        viewModelScope.launch {
+            repository.recordCompletion(preset)
+            refreshTodaySummary()
+        }
+    }
+
+    private suspend fun refreshTodaySummary() {
+        todaySummary = repository.todaySummary()
+    }
+
+    private fun syncRuntimeAndNotification() {
+        repository.saveRuntimeState(timers.toList())
         TimerForegroundService.sync(appContext, timers.toList())
     }
 
     override fun onCleared() {
-        syncActiveTimerNotification()
+        syncRuntimeAndNotification()
         TimerCommandBus.clear()
         alertPlayer.release()
         super.onCleared()
@@ -481,7 +506,10 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                     Column {
                         Text("TimerBoard", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "${viewModel.timers.count { it.isRunning }} running",
+                            appStatusText(
+                                runningCount = viewModel.timers.count { it.isRunning },
+                                summary = viewModel.todaySummary
+                            ),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1587,6 +1615,19 @@ fun TimerPreset.intervalSummary(): String {
 
 fun TimerItem.signalTimeText(): String {
     return timeFormatter.format(Date(System.currentTimeMillis() + remainingMillis))
+}
+
+fun appStatusText(runningCount: Int, summary: CompletionSummary): String {
+    val completionText = if (summary.count == 1) {
+        "1 completed today"
+    } else {
+        "${summary.count} completed today"
+    }
+    return if (summary.totalMillis > 0L) {
+        "$runningCount running | $completionText | ${summary.totalMillis.formatTimer()} total"
+    } else {
+        "$runningCount running | $completionText"
+    }
 }
 
 val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.US)
