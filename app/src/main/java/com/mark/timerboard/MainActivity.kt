@@ -165,6 +165,23 @@ data class TimerItem(
     val endElapsedRealtime: Long = 0L
 )
 
+data class StopwatchItem(
+    val id: Long,
+    val name: String,
+    val color: Long,
+    val elapsedMillis: Long = 0L,
+    val isRunning: Boolean = false,
+    val startElapsedRealtime: Long = 0L,
+    val laps: List<StopwatchLap> = emptyList()
+)
+
+data class StopwatchLap(
+    val number: Int,
+    val totalMillis: Long,
+    val lapMillis: Long,
+    val createdAtMillis: Long
+)
+
 data class AlarmSound(
     val id: String,
     val label: String,
@@ -185,8 +202,10 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
     private val repository = TimerRepository(application)
     private val alertPlayer = TimerAlertPlayer(application)
     private var tickerJob: Job? = null
+    private var stopwatchTickerJob: Job? = null
 
     val timers = mutableStateListOf<TimerItem>()
+    val stopwatches = mutableStateListOf<StopwatchItem>()
     var isLoading by mutableStateOf(true)
         private set
     var todaySummary by mutableStateOf(CompletionSummary())
@@ -201,11 +220,13 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             val presets = repository.loadPresets()
             timers.addAll(repository.restoreRuntimeState(presets))
+            stopwatches.addAll(loadStopwatches())
             refreshTodaySummary()
             refreshHistoryItems()
             isLoading = false
             updateShortcuts()
             ensureTicker()
+            ensureStopwatchTicker()
             syncRuntimeAndNotification()
         }
         TimerCommandBus.register(
@@ -453,9 +474,90 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         return true
     }
 
+    fun addStopwatch() {
+        val stopwatch = StopwatchItem(
+            id = System.currentTimeMillis(),
+            name = "Stopwatch ${stopwatches.size + 1}",
+            color = timerColors[stopwatches.size % timerColors.size]
+        )
+        stopwatches.add(0, stopwatch)
+        saveStopwatches()
+    }
+
+    fun startStopwatch(id: Long) {
+        updateStopwatch(id) { stopwatch ->
+            if (stopwatch.isRunning) stopwatch else stopwatch.copy(
+                isRunning = true,
+                startElapsedRealtime = SystemClock.elapsedRealtime()
+            )
+        }
+        ensureStopwatchTicker()
+        saveStopwatches()
+    }
+
+    fun pauseStopwatch(id: Long) {
+        updateStopwatch(id) { stopwatch ->
+            if (!stopwatch.isRunning) stopwatch else stopwatch.copy(
+                elapsedMillis = stopwatch.currentElapsedMillis(),
+                isRunning = false,
+                startElapsedRealtime = 0L
+            )
+        }
+        saveStopwatches()
+    }
+
+    fun resetStopwatch(id: Long) {
+        updateStopwatch(id) {
+            it.copy(
+                elapsedMillis = 0L,
+                isRunning = false,
+                startElapsedRealtime = 0L,
+                laps = emptyList()
+            )
+        }
+        saveStopwatches()
+    }
+
+    fun lapStopwatch(id: Long) {
+        updateStopwatch(id) { stopwatch ->
+            val total = stopwatch.currentElapsedMillis()
+            val previousTotal = stopwatch.laps.firstOrNull()?.totalMillis ?: 0L
+            val lap = StopwatchLap(
+                number = stopwatch.laps.size + 1,
+                totalMillis = total,
+                lapMillis = (total - previousTotal).coerceAtLeast(0L),
+                createdAtMillis = System.currentTimeMillis()
+            )
+            stopwatch.copy(laps = listOf(lap) + stopwatch.laps)
+        }
+        saveStopwatches()
+    }
+
+    fun deleteStopwatch(id: Long) {
+        stopwatches.removeAll { it.id == id }
+        saveStopwatches()
+    }
+
+    fun renameStopwatch(id: Long, name: String) {
+        updateStopwatch(id) {
+            it.copy(name = name.ifBlank { "Stopwatch" })
+        }
+        saveStopwatches()
+    }
+
+    fun shareStopwatchText(id: Long): String {
+        val stopwatch = stopwatches.firstOrNull { it.id == id } ?: return ""
+        return stopwatch.toShareText()
+    }
+
     private fun updateTimer(id: Long, transform: (TimerItem) -> TimerItem) {
         val index = timers.indexOfFirst { it.preset.id == id }
         if (index >= 0) timers[index] = transform(timers[index])
+    }
+
+    private fun updateStopwatch(id: Long, transform: (StopwatchItem) -> StopwatchItem) {
+        val index = stopwatches.indexOfFirst { it.id == id }
+        if (index >= 0) stopwatches[index] = transform(stopwatches[index])
     }
 
     private fun moveTimer(id: Long, offset: Int) {
@@ -494,6 +596,24 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                 delay(250L)
             }
             syncRuntimeAndNotification()
+        }
+    }
+
+    private fun ensureStopwatchTicker() {
+        if (stopwatchTickerJob?.isActive == true) return
+        stopwatchTickerJob = viewModelScope.launch {
+            while (stopwatches.any { it.isRunning }) {
+                stopwatches.forEachIndexed { index, stopwatch ->
+                    if (stopwatch.isRunning) {
+                        stopwatches[index] = stopwatch.copy(
+                            elapsedMillis = stopwatch.currentElapsedMillis(),
+                            startElapsedRealtime = SystemClock.elapsedRealtime()
+                        )
+                    }
+                }
+                delay(50L)
+            }
+            saveStopwatches()
         }
     }
 
@@ -564,7 +684,21 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private fun loadStopwatches(): List<StopwatchItem> {
+        val raw = appContext.getSharedPreferences("timer_board", Context.MODE_PRIVATE)
+            .getString(KEY_STOPWATCHES, null) ?: return listOf(defaultStopwatch())
+        return raw.toStopwatchesOrNull().orEmpty().ifEmpty { listOf(defaultStopwatch()) }
+    }
+
+    private fun saveStopwatches() {
+        appContext.getSharedPreferences("timer_board", Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_STOPWATCHES, stopwatches.toList().toStopwatchJson())
+            .apply()
+    }
+
     override fun onCleared() {
+        saveStopwatches()
         syncRuntimeAndNotification()
         TimerCommandBus.clear()
         alertPlayer.release()
@@ -647,6 +781,7 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     var fullScreenTimerId by remember { mutableStateOf<Long?>(null) }
     var showHistory by remember { mutableStateOf(false) }
     var showBackupDialog by remember { mutableStateOf(false) }
+    var showStopwatches by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { }
@@ -684,6 +819,22 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
         return
     }
 
+    if (showStopwatches) {
+        StopwatchScreen(
+            stopwatches = viewModel.stopwatches,
+            onBack = { showStopwatches = false },
+            onAdd = viewModel::addStopwatch,
+            onStart = viewModel::startStopwatch,
+            onPause = viewModel::pauseStopwatch,
+            onReset = viewModel::resetStopwatch,
+            onLap = viewModel::lapStopwatch,
+            onDelete = viewModel::deleteStopwatch,
+            onRename = viewModel::renameStopwatch,
+            onShare = { id -> shareStopwatch(context, viewModel.shareStopwatchText(id)) }
+        )
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -712,6 +863,9 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                     }
                     TextButton(onClick = { showBackupDialog = true }) {
                         Text("Backup")
+                    }
+                    TextButton(onClick = { showStopwatches = true }) {
+                        Text("Stopwatch")
                     }
                     TextButton(onClick = ::startAllWithPermission) {
                         Text("Start all")
@@ -1489,6 +1643,280 @@ fun BackupDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StopwatchScreen(
+    stopwatches: List<StopwatchItem>,
+    onBack: () -> Unit,
+    onAdd: () -> Unit,
+    onStart: (Long) -> Unit,
+    onPause: (Long) -> Unit,
+    onReset: (Long) -> Unit,
+    onLap: (Long) -> Unit,
+    onDelete: (Long) -> Unit,
+    onRename: (Long, String) -> Unit,
+    onShare: (Long) -> Unit
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to timers")
+                    }
+                },
+                title = {
+                    Column {
+                        Text("Stopwatches", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${stopwatches.count { it.isRunning }} running | ${stopwatches.size} saved",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                actions = {
+                    TextButton(onClick = onAdd) {
+                        Text("New")
+                    }
+                }
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onAdd) {
+                Icon(Icons.Default.Add, contentDescription = "Add stopwatch")
+            }
+        }
+    ) { padding ->
+        if (stopwatches.isEmpty()) {
+            EmptyStopwatches(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                onCreate = onAdd
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(stopwatches, key = { it.id }) { stopwatch ->
+                    StopwatchCard(
+                        stopwatch = stopwatch,
+                        onStart = { onStart(stopwatch.id) },
+                        onPause = { onPause(stopwatch.id) },
+                        onReset = { onReset(stopwatch.id) },
+                        onLap = { onLap(stopwatch.id) },
+                        onDelete = { onDelete(stopwatch.id) },
+                        onRename = { onRename(stopwatch.id, it) },
+                        onShare = { onShare(stopwatch.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StopwatchCard(
+    stopwatch: StopwatchItem,
+    onStart: () -> Unit,
+    onPause: () -> Unit,
+    onReset: () -> Unit,
+    onLap: () -> Unit,
+    onDelete: () -> Unit,
+    onRename: (String) -> Unit,
+    onShare: () -> Unit
+) {
+    var isEditingName by remember(stopwatch.id) { mutableStateOf(false) }
+    var editedName by remember(stopwatch.id) { mutableStateOf(stopwatch.name) }
+    val accent = Color(stopwatch.color)
+    val fastest = stopwatch.laps.minByOrNull { it.lapMillis }?.number
+    val slowest = stopwatch.laps.maxByOrNull { it.lapMillis }?.number
+
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(accent)
+                )
+                Spacer(Modifier.width(10.dp))
+                if (isEditingName) {
+                    OutlinedTextField(
+                        value = editedName,
+                        onValueChange = { editedName = it },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = {
+                            onRename(editedName.trim())
+                            isEditingName = false
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                } else {
+                    Text(
+                        stopwatch.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { isEditingName = true }) {
+                        Icon(Icons.Default.Edit, contentDescription = "Rename ${stopwatch.name}")
+                    }
+                    IconButton(
+                        enabled = stopwatch.laps.isNotEmpty(),
+                        onClick = onShare
+                    ) {
+                        Icon(Icons.Default.FileCopy, contentDescription = "Share ${stopwatch.name} laps")
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete ${stopwatch.name}")
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                stopwatch.elapsedMillis.formatStopwatch(),
+                fontSize = 44.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Button(
+                    onClick = if (stopwatch.isRunning) onPause else onStart,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        if (stopwatch.isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = null
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (stopwatch.isRunning) "Pause" else "Start")
+                }
+                OutlinedButton(
+                    enabled = stopwatch.elapsedMillis > 0L,
+                    onClick = onLap,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Lap")
+                }
+                OutlinedButton(
+                    enabled = stopwatch.elapsedMillis > 0L || stopwatch.laps.isNotEmpty(),
+                    onClick = onReset,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Reset")
+                }
+            }
+            if (stopwatch.laps.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "Laps",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(8.dp))
+                stopwatch.laps.take(8).forEach { lap ->
+                    StopwatchLapRow(
+                        lap = lap,
+                        isFastest = lap.number == fastest,
+                        isSlowest = stopwatch.laps.size > 1 && lap.number == slowest
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StopwatchLapRow(lap: StopwatchLap, isFastest: Boolean, isSlowest: Boolean) {
+    val label = when {
+        isFastest -> "Best"
+        isSlowest -> "Slowest"
+        else -> "Lap"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+    ) {
+        Text(
+            "#${lap.number}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.width(52.dp)
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            lap.lapMillis.formatStopwatch(),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            lap.totalMillis.formatStopwatch(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun EmptyStopwatches(modifier: Modifier = Modifier, onCreate: () -> Unit) {
+    Column(
+        modifier = modifier.padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            "No stopwatches yet",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Create one for laps, splits, practice, workouts, or experiments.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onCreate) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Create stopwatch")
+        }
+    }
+}
+
 @Composable
 fun LoadingTimers(modifier: Modifier = Modifier) {
     Column(
@@ -2233,6 +2661,7 @@ const val TIMER_MODE_POMODORO = "pomodoro"
 const val ACTION_START_TIMER = "com.mark.timerboard.START_TIMER"
 const val EXTRA_TIMER_ID = "timer_id"
 const val SNOOZE_MILLIS = 5 * 60_000L
+const val KEY_STOPWATCHES = "stopwatches"
 
 fun modeLabel(mode: String): String {
     return when (mode) {
@@ -2281,6 +2710,112 @@ fun sharePresetBackup(context: Context, backupText: String) {
         putExtra(Intent.EXTRA_TEXT, backupText)
     }
     context.startActivity(Intent.createChooser(intent, "Export timer backup"))
+}
+
+fun shareStopwatch(context: Context, stopwatchText: String) {
+    if (stopwatchText.isBlank()) return
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, "TimerBoard stopwatch laps")
+        putExtra(Intent.EXTRA_TEXT, stopwatchText)
+    }
+    context.startActivity(Intent.createChooser(intent, "Share stopwatch"))
+}
+
+fun defaultStopwatch(): StopwatchItem {
+    return StopwatchItem(
+        id = System.currentTimeMillis(),
+        name = "Stopwatch",
+        color = timerColors.first()
+    )
+}
+
+fun StopwatchItem.currentElapsedMillis(): Long {
+    return if (isRunning) {
+        elapsedMillis + (SystemClock.elapsedRealtime() - startElapsedRealtime).coerceAtLeast(0L)
+    } else {
+        elapsedMillis
+    }
+}
+
+fun StopwatchItem.toShareText(): String {
+    return buildString {
+        appendLine(name)
+        appendLine("Elapsed: ${elapsedMillis.formatStopwatch()}")
+        appendLine()
+        appendLine("lap,lap_time,total_time,recorded_at")
+        laps.reversed().forEach { lap ->
+            appendLine(
+                listOf(
+                    lap.number.toString(),
+                    lap.lapMillis.formatStopwatch(),
+                    lap.totalMillis.formatStopwatch(),
+                    lap.createdAtMillis.formatHistoryTime()
+                ).joinToString(",") { it.csvCell() }
+            )
+        }
+    }
+}
+
+fun List<StopwatchItem>.toStopwatchJson(): String {
+    val array = JSONArray()
+    forEach { stopwatch ->
+        val laps = JSONArray()
+        stopwatch.laps.forEach { lap ->
+            laps.put(
+                JSONObject()
+                    .put("number", lap.number)
+                    .put("totalMillis", lap.totalMillis)
+                    .put("lapMillis", lap.lapMillis)
+                    .put("createdAtMillis", lap.createdAtMillis)
+            )
+        }
+        array.put(
+            JSONObject()
+                .put("id", stopwatch.id)
+                .put("name", stopwatch.name)
+                .put("color", stopwatch.color)
+                .put("elapsedMillis", stopwatch.elapsedMillis)
+                .put("isRunning", stopwatch.isRunning)
+                .put("startWallTimeMillis", if (stopwatch.isRunning) System.currentTimeMillis() else 0L)
+                .put("laps", laps)
+        )
+    }
+    return array.toString()
+}
+
+fun String.toStopwatchesOrNull(): List<StopwatchItem>? {
+    return runCatching {
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val array = JSONArray(this)
+        List(array.length()) { index ->
+            val item = array.getJSONObject(index)
+            val lapsArray = item.optJSONArray("laps") ?: JSONArray()
+            val laps = List(lapsArray.length()) { lapIndex ->
+                val lap = lapsArray.getJSONObject(lapIndex)
+                StopwatchLap(
+                    number = lap.optInt("number", lapIndex + 1),
+                    totalMillis = lap.optLong("totalMillis", 0L).coerceAtLeast(0L),
+                    lapMillis = lap.optLong("lapMillis", 0L).coerceAtLeast(0L),
+                    createdAtMillis = lap.optLong("createdAtMillis", nowWall)
+                )
+            }
+            val wasRunning = item.optBoolean("isRunning", false)
+            val startWall = item.optLong("startWallTimeMillis", 0L)
+            val elapsed = item.optLong("elapsedMillis", 0L).coerceAtLeast(0L) +
+                if (wasRunning && startWall > 0L) (nowWall - startWall).coerceAtLeast(0L) else 0L
+            StopwatchItem(
+                id = item.optLong("id").takeIf { it > 0L } ?: nowWall + index,
+                name = item.optString("name", "Stopwatch").ifBlank { "Stopwatch" },
+                color = item.optLong("color", timerColors.first()),
+                elapsedMillis = elapsed,
+                isRunning = wasRunning,
+                startElapsedRealtime = if (wasRunning) nowElapsed else 0L,
+                laps = laps
+            )
+        }
+    }.getOrNull()
 }
 
 fun List<TimerPreset>.toBackupJson(): String {
@@ -2553,5 +3088,20 @@ fun Long.formatTimer(): String {
         "%d:%02d:%02d".format(hours, minutes, seconds)
     } else {
         "%02d:%02d".format(minutes, seconds)
+    }
+}
+
+fun Long.formatStopwatch(): String {
+    val totalCentiseconds = this / 10L
+    val centiseconds = totalCentiseconds % 100L
+    val totalSeconds = totalCentiseconds / 100L
+    val seconds = totalSeconds % 60L
+    val totalMinutes = totalSeconds / 60L
+    val minutes = totalMinutes % 60L
+    val hours = totalMinutes / 60L
+    return if (hours > 0L) {
+        "%d:%02d:%02d.%02d".format(hours, minutes, seconds, centiseconds)
+    } else {
+        "%02d:%02d.%02d".format(minutes, seconds, centiseconds)
     }
 }

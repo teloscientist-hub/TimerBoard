@@ -4,11 +4,13 @@ TimerBoard is a local-first Android timer app built with Kotlin and Jetpack Comp
 
 ## Current version
 
-Version: `2.3`
+Version: `2.4`
 
 - Saved countdown timers
 - Saved Pomodoro timers with focus, break, session, and long-break cycles
 - Saved interval timers with warmup, work, rest, cooldown, and rounds
+- Multiple saved stopwatches with centisecond display
+- Stopwatch laps, splits, best/slowest lap labels, rename, delete, and share
 - Full-screen interval and Pomodoro phase display
 - Default starter timers: Coffee, Stretch, Focus
 - Create timers with a name, duration, and color
@@ -67,5 +69,5 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradle
 
 ## Suggested next steps
 
-1. Add history date-range filtering.
-2. Add drag-and-drop timer ordering.
+1. Add stopwatch history persistence into the History screen.
+2. Add history date-range filtering.
