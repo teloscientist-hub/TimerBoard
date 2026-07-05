@@ -89,8 +89,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -150,6 +153,7 @@ data class TimerPreset(
     val color: Long,
     val alarmId: String = DEFAULT_ALARM_ID,
     val alarmUri: String? = null,
+    val alarmRepeatCount: Int = 1,
     val mode: String = TIMER_MODE_COUNTDOWN,
     val warmupMillis: Long = 0L,
     val workMillis: Long = 0L,
@@ -242,20 +246,24 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         seconds: Int,
         color: Long,
         alarmId: String,
-        alarmUri: String?
-    ) {
+        alarmUri: String?,
+        alarmRepeatCount: Int
+    ): Long {
         val duration = ((minutes * 60L) + seconds).coerceAtLeast(1L) * 1000L
+        val id = System.currentTimeMillis()
         val preset = TimerPreset(
-            id = System.currentTimeMillis(),
+            id = id,
             name = name.ifBlank { "Timer" },
             durationMillis = duration,
             color = color,
             alarmId = alarmById(alarmId).id,
-            alarmUri = alarmUri
+            alarmUri = alarmUri,
+            alarmRepeatCount = alarmRepeatCount.coerceAtLeast(1)
         )
         timers.add(0, TimerItem(preset))
         saveAsync()
         syncRuntimeAndNotification()
+        return id
     }
 
     fun addIntervalTimer(
@@ -267,11 +275,13 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         rounds: Int,
         color: Long,
         alarmId: String,
-        alarmUri: String?
-    ) {
+        alarmUri: String?,
+        alarmRepeatCount: Int
+    ): Long {
         val normalizedRounds = rounds.coerceAtLeast(1)
+        val id = System.currentTimeMillis()
         val preset = TimerPreset(
-            id = System.currentTimeMillis(),
+            id = id,
             name = name.ifBlank { "Interval" },
             durationMillis = intervalDurationMillis(
                 warmupSeconds = warmupSeconds,
@@ -283,6 +293,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
             color = color,
             alarmId = alarmById(alarmId).id,
             alarmUri = alarmUri,
+            alarmRepeatCount = alarmRepeatCount.coerceAtLeast(1),
             mode = TIMER_MODE_INTERVAL,
             warmupMillis = warmupSeconds.coerceAtLeast(0) * 1000L,
             workMillis = workSeconds.coerceAtLeast(1) * 1000L,
@@ -293,6 +304,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         timers.add(0, TimerItem(preset))
         saveAsync()
         syncRuntimeAndNotification()
+        return id
     }
 
     fun addPomodoroTimer(
@@ -303,20 +315,23 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         longBreakMinutes: Int,
         color: Long,
         alarmId: String,
-        alarmUri: String?
-    ) {
+        alarmUri: String?,
+        alarmRepeatCount: Int
+    ): Long {
         val normalizedSessions = sessions.coerceAtLeast(1)
         val focusMillis = focusMinutes.coerceAtLeast(1) * 60_000L
         val breakMillis = breakMinutes.coerceAtLeast(0) * 60_000L
         val longBreakMillis = longBreakMinutes.coerceAtLeast(0) * 60_000L
         val duration = (focusMillis + breakMillis) * normalizedSessions + longBreakMillis
+        val id = System.currentTimeMillis()
         val preset = TimerPreset(
-            id = System.currentTimeMillis(),
+            id = id,
             name = name.ifBlank { "Pomodoro" },
             durationMillis = duration,
             color = color,
             alarmId = alarmById(alarmId).id,
             alarmUri = alarmUri,
+            alarmRepeatCount = alarmRepeatCount.coerceAtLeast(1),
             mode = TIMER_MODE_POMODORO,
             workMillis = focusMillis,
             restMillis = breakMillis,
@@ -326,6 +341,7 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         timers.add(0, TimerItem(preset))
         saveAsync()
         syncRuntimeAndNotification()
+        return id
     }
 
     fun updateTimerDuration(
@@ -334,7 +350,8 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
         minutes: Int,
         seconds: Int,
         alarmId: String,
-        alarmUri: String?
+        alarmUri: String?,
+        alarmRepeatCount: Int
     ) {
         val duration = ((hours * 3600L) + (minutes * 60L) + seconds).coerceAtLeast(1L) * 1000L
         updateTimer(id) { item ->
@@ -342,7 +359,8 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                 preset = item.preset.copy(
                     durationMillis = duration,
                     alarmId = alarmById(alarmId).id,
-                    alarmUri = alarmUri
+                    alarmUri = alarmUri,
+                    alarmRepeatCount = alarmRepeatCount.coerceAtLeast(1)
                 ),
                 remainingMillis = duration,
                 isRunning = false,
@@ -586,7 +604,11 @@ class TimerBoardViewModel(application: Application) : AndroidViewModel(applicati
                         if (remaining == 0L) {
                             didFinishTimer = true
                             recordCompletion(item.preset)
-                            alertPlayer.play(item.preset.alarmId, item.preset.alarmUri)
+                            alertPlayer.play(
+                                item.preset.alarmId,
+                                item.preset.alarmUri,
+                                item.preset.alarmRepeatCount
+                            )
                         }
                     }
                 }
@@ -718,33 +740,54 @@ class TimerAlertPlayer(private val context: Context) {
     private val handler = Handler(Looper.getMainLooper())
     private var activeRingtone: Ringtone? = null
 
-    fun play(alarmId: String, alarmUri: String?) {
+    fun play(alarmId: String, alarmUri: String?, repeatCount: Int) {
+        stop()
+        val repeats = repeatCount.coerceAtLeast(1)
         alarmUri?.let { uriText ->
             val ringtone = RingtoneManager.getRingtone(context, Uri.parse(uriText))
             if (ringtone != null) {
-                activeRingtone?.stop()
                 activeRingtone = ringtone
-                ringtone.play()
-                handler.postDelayed({ ringtone.stop() }, 10_000L)
-                vibrateSystemSound()
+                repeat(repeats) { index ->
+                    handler.postDelayed(
+                        {
+                            ringtone.stop()
+                            ringtone.play()
+                            vibrateSystemSound()
+                        },
+                        index * SYSTEM_SOUND_REPEAT_INTERVAL_MILLIS
+                    )
+                }
+                handler.postDelayed(
+                    { ringtone.stop() },
+                    repeats * SYSTEM_SOUND_REPEAT_INTERVAL_MILLIS
+                )
                 return
             }
         }
 
         val alarm = alarmById(alarmId)
-        alarm.toneEvents.forEach { event ->
+        val cycleDuration = alarm.toneEvents.maxOf { it.delayMillis + it.durationMillis } + 450L
+        repeat(repeats) { repeatIndex ->
+            val repeatDelay = repeatIndex * cycleDuration
+            alarm.toneEvents.forEach { event ->
+                handler.postDelayed(
+                    { toneGenerator.startTone(event.tone, event.durationMillis) },
+                    repeatDelay + event.delayMillis
+                )
+            }
             handler.postDelayed(
-                { toneGenerator.startTone(event.tone, event.durationMillis) },
-                event.delayMillis
+                {
+                    vibrator.vibrate(
+                        VibrationEffect.createWaveform(
+                            alarm.vibrationPattern,
+                            alarm.vibrationAmplitudes,
+                            -1
+                        )
+                    )
+                },
+                repeatDelay
             )
         }
-        vibrator.vibrate(
-            VibrationEffect.createWaveform(
-                alarm.vibrationPattern,
-                alarm.vibrationAmplitudes,
-                -1
-            )
-        )
     }
 
     private fun vibrateSystemSound() {
@@ -928,12 +971,13 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
     if (showCreateDialog) {
         CreateTimerDialog(
             onDismiss = { showCreateDialog = false },
-            onCreateCountdown = { name, minutes, seconds, color, alarmId, alarmUri ->
-                viewModel.addTimer(name, minutes, seconds, color, alarmId, alarmUri)
+            onCreateCountdown = { name, minutes, seconds, color, alarmId, alarmUri, alarmRepeatCount, startAfterSave ->
+                val id = viewModel.addTimer(name, minutes, seconds, color, alarmId, alarmUri, alarmRepeatCount)
+                if (startAfterSave) startTimerWithPermission(id)
                 showCreateDialog = false
             },
-            onCreatePomodoro = { name, focusMinutes, breakMinutes, sessions, longBreakMinutes, color, alarmId, alarmUri ->
-                viewModel.addPomodoroTimer(
+            onCreatePomodoro = { name, focusMinutes, breakMinutes, sessions, longBreakMinutes, color, alarmId, alarmUri, alarmRepeatCount, startAfterSave ->
+                val id = viewModel.addPomodoroTimer(
                     name = name,
                     focusMinutes = focusMinutes,
                     breakMinutes = breakMinutes,
@@ -941,12 +985,14 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                     longBreakMinutes = longBreakMinutes,
                     color = color,
                     alarmId = alarmId,
-                    alarmUri = alarmUri
+                    alarmUri = alarmUri,
+                    alarmRepeatCount = alarmRepeatCount
                 )
+                if (startAfterSave) startTimerWithPermission(id)
                 showCreateDialog = false
             },
-            onCreateInterval = { name, warmup, work, rest, cooldown, rounds, color, alarmId, alarmUri ->
-                viewModel.addIntervalTimer(
+            onCreateInterval = { name, warmup, work, rest, cooldown, rounds, color, alarmId, alarmUri, alarmRepeatCount, startAfterSave ->
+                val id = viewModel.addIntervalTimer(
                     name = name,
                     warmupSeconds = warmup,
                     workSeconds = work,
@@ -955,8 +1001,10 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
                     rounds = rounds,
                     color = color,
                     alarmId = alarmId,
-                    alarmUri = alarmUri
+                    alarmUri = alarmUri,
+                    alarmRepeatCount = alarmRepeatCount
                 )
+                if (startAfterSave) startTimerWithPermission(id)
                 showCreateDialog = false
             }
         )
@@ -986,15 +1034,17 @@ fun TimerBoardApp(viewModel: TimerBoardViewModel) {
         EditDurationDialog(
             timer = timer,
             onDismiss = { timerBeingEdited = null },
-            onSave = { hours, minutes, seconds, alarmId, alarmUri ->
+            onSave = { hours, minutes, seconds, alarmId, alarmUri, alarmRepeatCount, startAfterSave ->
                 viewModel.updateTimerDuration(
                     timer.preset.id,
                     hours,
                     minutes,
                     seconds,
                     alarmId,
-                    alarmUri
+                    alarmUri,
+                    alarmRepeatCount
                 )
+                if (startAfterSave) startTimerWithPermission(timer.preset.id)
                 timerBeingEdited = null
             }
         )
@@ -2104,7 +2154,7 @@ fun EmptyTimers(modifier: Modifier = Modifier, onCreate: () -> Unit) {
 fun EditDurationDialog(
     timer: TimerItem,
     onDismiss: () -> Unit,
-    onSave: (Int, Int, Int, String, String?) -> Unit
+    onSave: (Int, Int, Int, String, String?, Int, Boolean) -> Unit
 ) {
     val durationSeconds = timer.preset.durationMillis / 1000L
     var hours by remember(timer.preset.id) {
@@ -2122,6 +2172,9 @@ fun EditDurationDialog(
     var selectedAlarmUri by remember(timer.preset.id) {
         mutableStateOf(timer.preset.alarmUri)
     }
+    var selectedAlarmRepeatCount by remember(timer.preset.id) {
+        mutableStateOf(timer.preset.alarmRepeatCount.toString())
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2131,13 +2184,13 @@ fun EditDurationDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TimeNumberField(
                         value = hours,
-                        onValueChange = { hours = it.filter(Char::isDigit).take(2) },
+                        onValueChange = { hours = it.filter(Char::isDigit) },
                         label = "Hours",
                         modifier = Modifier.weight(1f)
                     )
                     TimeNumberField(
                         value = minutes,
-                        onValueChange = { minutes = it.filter(Char::isDigit).take(2) },
+                        onValueChange = { minutes = it.filter(Char::isDigit) },
                         label = "Minutes",
                         modifier = Modifier.weight(1f)
                     )
@@ -2160,23 +2213,44 @@ fun EditDurationDialog(
                         selectedAlarmId = it
                         selectedAlarmUri = null
                     },
-                    onSystemSoundSelected = { selectedAlarmUri = it }
+                    onSystemSoundSelected = { selectedAlarmUri = it },
+                    alarmRepeatCount = selectedAlarmRepeatCount,
+                    onAlarmRepeatCountChange = { selectedAlarmRepeatCount = it.filter(Char::isDigit).take(3) }
                 )
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    onSave(
-                        hours.toIntOrNull() ?: 0,
-                        (minutes.toIntOrNull() ?: 0).coerceIn(0, 59),
-                        (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
-                        selectedAlarmId,
-                        selectedAlarmUri
-                    )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = {
+                        onSave(
+                            hours.toIntOrNull() ?: 0,
+                            minutes.toIntOrNull() ?: 0,
+                            (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
+                            selectedAlarmId,
+                            selectedAlarmUri,
+                            selectedAlarmRepeatCount.toIntOrNull()?.coerceAtLeast(1) ?: 1,
+                            false
+                        )
+                    }
+                ) {
+                    Text("Save")
                 }
-            ) {
-                Text("Save")
+                Button(
+                    onClick = {
+                        onSave(
+                            hours.toIntOrNull() ?: 0,
+                            minutes.toIntOrNull() ?: 0,
+                            (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
+                            selectedAlarmId,
+                            selectedAlarmUri,
+                            selectedAlarmRepeatCount.toIntOrNull()?.coerceAtLeast(1) ?: 1,
+                            true
+                        )
+                    }
+                ) {
+                    Text("Save and Start")
+                }
             }
         },
         dismissButton = {
@@ -2190,9 +2264,9 @@ fun EditDurationDialog(
 @Composable
 fun CreateTimerDialog(
     onDismiss: () -> Unit,
-    onCreateCountdown: (String, Int, Int, Long, String, String?) -> Unit,
-    onCreatePomodoro: (String, Int, Int, Int, Int, Long, String, String?) -> Unit,
-    onCreateInterval: (String, Int, Int, Int, Int, Int, Long, String, String?) -> Unit
+    onCreateCountdown: (String, Int, Int, Long, String, String?, Int, Boolean) -> Unit,
+    onCreatePomodoro: (String, Int, Int, Int, Int, Long, String, String?, Int, Boolean) -> Unit,
+    onCreateInterval: (String, Int, Int, Int, Int, Int, Long, String, String?, Int, Boolean) -> Unit
 ) {
     var mode by remember { mutableStateOf(TIMER_MODE_COUNTDOWN) }
     var name by remember { mutableStateOf("") }
@@ -2210,6 +2284,50 @@ fun CreateTimerDialog(
     var selectedColor by remember { mutableLongStateOf(timerColors.first()) }
     var selectedAlarmId by remember { mutableStateOf(DEFAULT_ALARM_ID) }
     var selectedAlarmUri by remember { mutableStateOf<String?>(null) }
+    var selectedAlarmRepeatCount by remember { mutableStateOf("1") }
+
+    fun createTimer(startAfterSave: Boolean) {
+        val repeatCount = selectedAlarmRepeatCount.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        if (mode == TIMER_MODE_COUNTDOWN) {
+            onCreateCountdown(
+                name.trim(),
+                minutes.toIntOrNull() ?: 0,
+                (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
+                selectedColor,
+                selectedAlarmId,
+                selectedAlarmUri,
+                repeatCount,
+                startAfterSave
+            )
+        } else if (mode == TIMER_MODE_POMODORO) {
+            onCreatePomodoro(
+                name.trim(),
+                pomodoroFocusMinutes.toIntOrNull() ?: 25,
+                pomodoroBreakMinutes.toIntOrNull() ?: 5,
+                pomodoroSessions.toIntOrNull() ?: 4,
+                pomodoroLongBreakMinutes.toIntOrNull() ?: 15,
+                selectedColor,
+                selectedAlarmId,
+                selectedAlarmUri,
+                repeatCount,
+                startAfterSave
+            )
+        } else {
+            onCreateInterval(
+                name.trim(),
+                warmupSeconds.toIntOrNull() ?: 0,
+                (workSeconds.toIntOrNull() ?: 1).coerceAtLeast(1),
+                restSeconds.toIntOrNull() ?: 0,
+                cooldownSeconds.toIntOrNull() ?: 0,
+                (rounds.toIntOrNull() ?: 1).coerceAtLeast(1),
+                selectedColor,
+                selectedAlarmId,
+                selectedAlarmUri,
+                repeatCount,
+                startAfterSave
+            )
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -2280,7 +2398,7 @@ fun CreateTimerDialog(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TimeNumberField(
                             value = minutes,
-                            onValueChange = { minutes = it.filter(Char::isDigit).take(3) },
+                            onValueChange = { minutes = it.filter(Char::isDigit) },
                             label = "Minutes",
                             modifier = Modifier.weight(1f)
                         )
@@ -2429,49 +2547,20 @@ fun CreateTimerDialog(
                         selectedAlarmId = it
                         selectedAlarmUri = null
                     },
-                    onSystemSoundSelected = { selectedAlarmUri = it }
+                    onSystemSoundSelected = { selectedAlarmUri = it },
+                    alarmRepeatCount = selectedAlarmRepeatCount,
+                    onAlarmRepeatCountChange = { selectedAlarmRepeatCount = it.filter(Char::isDigit).take(3) }
                 )
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    if (mode == TIMER_MODE_COUNTDOWN) {
-                        onCreateCountdown(
-                            name.trim(),
-                            minutes.toIntOrNull() ?: 0,
-                            (seconds.toIntOrNull() ?: 0).coerceIn(0, 59),
-                            selectedColor,
-                            selectedAlarmId,
-                            selectedAlarmUri
-                        )
-                    } else if (mode == TIMER_MODE_POMODORO) {
-                        onCreatePomodoro(
-                            name.trim(),
-                            pomodoroFocusMinutes.toIntOrNull() ?: 25,
-                            pomodoroBreakMinutes.toIntOrNull() ?: 5,
-                            pomodoroSessions.toIntOrNull() ?: 4,
-                            pomodoroLongBreakMinutes.toIntOrNull() ?: 15,
-                            selectedColor,
-                            selectedAlarmId,
-                            selectedAlarmUri
-                        )
-                    } else {
-                        onCreateInterval(
-                            name.trim(),
-                            warmupSeconds.toIntOrNull() ?: 0,
-                            (workSeconds.toIntOrNull() ?: 1).coerceAtLeast(1),
-                            restSeconds.toIntOrNull() ?: 0,
-                            cooldownSeconds.toIntOrNull() ?: 0,
-                            (rounds.toIntOrNull() ?: 1).coerceAtLeast(1),
-                            selectedColor,
-                            selectedAlarmId,
-                            selectedAlarmUri
-                        )
-                    }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { createTimer(false) }) {
+                    Text("Create")
                 }
-            ) {
-                Text("Create")
+                Button(onClick = { createTimer(true) }) {
+                    Text("Save and Start")
+                }
             }
         },
         dismissButton = {
@@ -2503,13 +2592,24 @@ fun TimeNumberField(
     label: String,
     modifier: Modifier = Modifier
 ) {
+    var fieldValue by remember(value) {
+        mutableStateOf(TextFieldValue(value, selection = TextRange(value.length)))
+    }
     OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
+        value = fieldValue,
+        onValueChange = {
+            val digits = it.text.filter(Char::isDigit)
+            fieldValue = it.copy(text = digits)
+            onValueChange(digits)
+        },
         label = { Text(label) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         singleLine = true,
-        modifier = modifier
+        modifier = modifier.onFocusChanged { focusState ->
+            if (focusState.isFocused) {
+                fieldValue = fieldValue.copy(selection = TextRange(0, fieldValue.text.length))
+            }
+        }
     )
 }
 
@@ -2536,7 +2636,9 @@ fun AlarmSelector(
     selectedAlarmId: String,
     selectedAlarmUri: String?,
     onSelected: (String) -> Unit,
-    onSystemSoundSelected: (String?) -> Unit
+    onSystemSoundSelected: (String?) -> Unit,
+    alarmRepeatCount: String,
+    onAlarmRepeatCountChange: (String) -> Unit
 ) {
     val context = LocalContext.current
     val ringtonePicker = rememberLauncherForActivityResult(
@@ -2611,6 +2713,12 @@ fun AlarmSelector(
                 overflow = TextOverflow.Ellipsis
             )
         }
+        TimeNumberField(
+            value = alarmRepeatCount,
+            onValueChange = onAlarmRepeatCountChange,
+            label = "Repeat sound count",
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -2662,6 +2770,7 @@ const val ACTION_START_TIMER = "com.mark.timerboard.START_TIMER"
 const val EXTRA_TIMER_ID = "timer_id"
 const val SNOOZE_MILLIS = 5 * 60_000L
 const val KEY_STOPWATCHES = "stopwatches"
+const val SYSTEM_SOUND_REPEAT_INTERVAL_MILLIS = 3_500L
 
 fun modeLabel(mode: String): String {
     return when (mode) {
@@ -2829,6 +2938,7 @@ fun List<TimerPreset>.toBackupJson(): String {
                 .put("color", preset.color)
                 .put("alarmId", alarmById(preset.alarmId).id)
                 .put("alarmUri", preset.alarmUri)
+                .put("alarmRepeatCount", preset.alarmRepeatCount)
                 .put("mode", preset.mode)
                 .put("warmupMillis", preset.warmupMillis)
                 .put("workMillis", preset.workMillis)
@@ -2852,6 +2962,7 @@ fun String.toTimerPresetsOrNull(): List<TimerPreset>? {
                 color = item.optLong("color", timerColors.first()),
                 alarmId = alarmById(item.optString("alarmId", DEFAULT_ALARM_ID)).id,
                 alarmUri = item.optString("alarmUri", "").ifBlank { null },
+                alarmRepeatCount = item.optInt("alarmRepeatCount", 1).coerceAtLeast(1),
                 mode = item.optString("mode", TIMER_MODE_COUNTDOWN),
                 warmupMillis = item.optLong("warmupMillis", 0L).coerceAtLeast(0L),
                 workMillis = item.optLong("workMillis", 0L).coerceAtLeast(0L),

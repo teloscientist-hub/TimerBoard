@@ -7,6 +7,9 @@ Use this checklist before app releases that affect UI, workflows, alarms, notifi
 - Create a countdown timer from a quick preset and from manual input.
 - Create a Pomodoro timer from each cycle template and from manual focus/break/session input.
 - Create an interval timer from each template and from manual input.
+- Set alarm repeat count, complete a timer, and confirm the sound repeats the chosen number of times.
+- Enter a large minute value such as 1000 and confirm it saves correctly.
+- Use Save and Start from create/edit dialogs and confirm the timer starts immediately.
 - Create, start, pause, lap, reset, rename, share, and delete a stopwatch.
 - Kill and reopen the app while a stopwatch is running; confirm elapsed time is restored.
 - Start, pause, resume, reset, duplicate, edit, and delete a timer.

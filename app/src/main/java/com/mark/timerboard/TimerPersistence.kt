@@ -25,6 +25,7 @@ data class TimerPresetEntity(
     val color: Long,
     val alarmId: String,
     val alarmUri: String?,
+    val alarmRepeatCount: Int,
     val sortOrder: Int,
     val mode: String,
     val warmupMillis: Long,
@@ -95,7 +96,7 @@ interface TimerHistoryDao {
 
 @Database(
     entities = [TimerPresetEntity::class, TimerHistoryEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class TimerBoardDatabase : RoomDatabase() {
@@ -112,7 +113,7 @@ abstract class TimerBoardDatabase : RoomDatabase() {
                     context.applicationContext,
                     TimerBoardDatabase::class.java,
                     "timer_board.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }
@@ -143,6 +144,12 @@ abstract class TimerBoardDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
+            }
+        }
+
+        private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE timer_presets ADD COLUMN alarmRepeatCount INTEGER NOT NULL DEFAULT 1")
             }
         }
     }
@@ -299,6 +306,7 @@ class TimerRepository(context: Context) {
                     color = item.getLong("color"),
                     alarmId = alarmById(item.optString("alarmId", DEFAULT_ALARM_ID)).id,
                     alarmUri = item.optString("alarmUri", "").ifBlank { null },
+                    alarmRepeatCount = item.optInt("alarmRepeatCount", 1).coerceAtLeast(1),
                     mode = TIMER_MODE_COUNTDOWN
                 )
             }
@@ -319,6 +327,7 @@ class TimerRepository(context: Context) {
             color = color,
             alarmId = alarmById(alarmId).id,
             alarmUri = alarmUri,
+            alarmRepeatCount = alarmRepeatCount.coerceAtLeast(1),
             mode = mode,
             warmupMillis = warmupMillis,
             workMillis = workMillis,
@@ -336,6 +345,7 @@ class TimerRepository(context: Context) {
             color = color,
             alarmId = alarmById(alarmId).id,
             alarmUri = alarmUri,
+            alarmRepeatCount = alarmRepeatCount.coerceAtLeast(1),
             sortOrder = sortOrder,
             mode = mode,
             warmupMillis = warmupMillis,

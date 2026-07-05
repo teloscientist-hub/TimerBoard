@@ -4,7 +4,7 @@ TimerBoard is a local-first Android timer app built with Kotlin and Jetpack Comp
 
 ## Current version
 
-Version: `2.4`
+Version: `2.5`
 
 - Saved countdown timers
 - Saved Pomodoro timers with focus, break, session, and long-break cycles
@@ -16,6 +16,9 @@ Version: `2.4`
 - Create timers with a name, duration, and color
 - Tap a timer's time display to edit hours, minutes, and seconds
 - Choose from TimerBoard alarm patterns or Android's built-in phone sounds
+- Choose how many times a timer alarm repeats
+- Duration fields select their current value on focus and allow large minute values
+- Create and edit dialogs include Save and Start
 - Running timers show the 24-hour signal time down to the second
 - Running timers keep a persistent notification showing the next timer to finish
 - Running timer notification includes pause-all and reset-all actions
@@ -70,4 +73,4 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradle
 ## Suggested next steps
 
 1. Add stopwatch history persistence into the History screen.
-2. Add history date-range filtering.
+2. Add per-timer alarm repeat spacing and dismiss controls.
