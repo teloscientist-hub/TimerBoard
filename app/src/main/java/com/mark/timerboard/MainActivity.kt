@@ -29,6 +29,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,10 +66,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -91,6 +96,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -1209,7 +1215,7 @@ fun HistoryFilterControls(
     Card(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(16.dp)) {
@@ -1275,7 +1281,7 @@ fun HistorySummaryCard(summary: CompletionSummary, pomodoroSummary: CompletionSu
     Card(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(16.dp)) {
@@ -1345,7 +1351,7 @@ fun HistoryItemCard(history: TimerHistoryItem) {
     Card(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -1454,7 +1460,7 @@ fun TimerCard(
     Card(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(16.dp)) {
@@ -1793,7 +1799,7 @@ fun StopwatchCard(
     Card(
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(16.dp)) {
@@ -2734,17 +2740,94 @@ fun ColorSwatch(color: Long, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
+private val BrandPrimary = Color(0xFF315F72)
+private val BrandSecondary = Color(0xFF785A2F)
+private val BrandTertiary = Color(0xFF436B4F)
+
+/**
+ * Hand-tuned tonal approximation (blend seed toward white/black) rather than a full
+ * HCT-based palette generator, so containers/on-colors stay coherent with the brand
+ * hues instead of falling back to Material3's default baseline purple.
+ */
+private fun Color.mix(target: Color, amount: Float): Color = lerp(this, target, amount)
+
+private val TimerBoardLightColorScheme = lightColorScheme(
+    primary = BrandPrimary,
+    onPrimary = Color.White,
+    primaryContainer = BrandPrimary.mix(Color.White, 0.80f),
+    onPrimaryContainer = BrandPrimary.mix(Color.Black, 0.55f),
+    secondary = BrandSecondary,
+    onSecondary = Color.White,
+    secondaryContainer = BrandSecondary.mix(Color.White, 0.80f),
+    onSecondaryContainer = BrandSecondary.mix(Color.Black, 0.55f),
+    tertiary = BrandTertiary,
+    onTertiary = Color.White,
+    tertiaryContainer = BrandTertiary.mix(Color.White, 0.80f),
+    onTertiaryContainer = BrandTertiary.mix(Color.Black, 0.55f),
+    background = Color(0xFFFAF9F6),
+    onBackground = Color(0xFF1C1B17),
+    surface = Color(0xFFFFFBFF),
+    onSurface = Color(0xFF1C1B17),
+    surfaceVariant = Color(0xFFF0ECE5),
+    onSurfaceVariant = Color(0xFF4E4A42),
+    outline = Color(0xFF817C72),
+    outlineVariant = Color(0xFFD3CCC0),
+    inverseSurface = Color(0xFF31302B),
+    inverseOnSurface = Color(0xFFF6F0E7),
+    inversePrimary = BrandPrimary.mix(Color.White, 0.55f),
+    surfaceTint = BrandPrimary,
+    error = Color(0xFFBA1A1A),
+    onError = Color.White,
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF410002)
+)
+
+private val TimerBoardDarkColorScheme = darkColorScheme(
+    primary = BrandPrimary.mix(Color.White, 0.55f),
+    onPrimary = BrandPrimary.mix(Color.Black, 0.65f),
+    primaryContainer = BrandPrimary.mix(Color.Black, 0.35f),
+    onPrimaryContainer = BrandPrimary.mix(Color.White, 0.80f),
+    secondary = BrandSecondary.mix(Color.White, 0.55f),
+    onSecondary = BrandSecondary.mix(Color.Black, 0.65f),
+    secondaryContainer = BrandSecondary.mix(Color.Black, 0.35f),
+    onSecondaryContainer = BrandSecondary.mix(Color.White, 0.80f),
+    tertiary = BrandTertiary.mix(Color.White, 0.55f),
+    onTertiary = BrandTertiary.mix(Color.Black, 0.65f),
+    tertiaryContainer = BrandTertiary.mix(Color.Black, 0.35f),
+    onTertiaryContainer = BrandTertiary.mix(Color.White, 0.80f),
+    background = Color(0xFF15140F),
+    onBackground = Color(0xFFE8E2D9),
+    surface = Color(0xFF15140F),
+    onSurface = Color(0xFFE8E2D9),
+    surfaceVariant = Color(0xFF4E4A42),
+    onSurfaceVariant = Color(0xFFD3CCC0),
+    outline = Color(0xFF9B958A),
+    outlineVariant = Color(0xFF4E4A42),
+    inverseSurface = Color(0xFFE8E2D9),
+    inverseOnSurface = Color(0xFF31302B),
+    inversePrimary = BrandPrimary,
+    surfaceTint = BrandPrimary.mix(Color.White, 0.55f),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6)
+)
+
 @Composable
 fun TimerBoardTheme(content: @Composable () -> Unit) {
+    val darkTheme = isSystemInDarkTheme()
+    val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val context = LocalContext.current
+
+    val colorScheme = when {
+        dynamicColorAvailable && darkTheme -> dynamicDarkColorScheme(context)
+        dynamicColorAvailable && !darkTheme -> dynamicLightColorScheme(context)
+        darkTheme -> TimerBoardDarkColorScheme
+        else -> TimerBoardLightColorScheme
+    }
+
     MaterialTheme(
-        colorScheme = androidx.compose.material3.lightColorScheme(
-            primary = Color(0xFF315F72),
-            secondary = Color(0xFF785A2F),
-            tertiary = Color(0xFF436B4F),
-            background = Color(0xFFFAF9F6),
-            surface = Color(0xFFFFFBFF),
-            surfaceVariant = Color(0xFFF0ECE5)
-        ),
+        colorScheme = colorScheme,
         content = {
             Surface(color = MaterialTheme.colorScheme.background) {
                 content()

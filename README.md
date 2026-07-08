@@ -4,8 +4,12 @@ TimerBoard is a local-first Android timer app built with Kotlin and Jetpack Comp
 
 ## Current version
 
-Version: `2.5`
+Version: `2.6`
 
+- Complete Material 3 color scheme (light and dark) instead of a partially themed default, generated from TimerBoard's brand colors
+- Automatic Material You dynamic color on Android 12+, matching the device wallpaper
+- Dark theme that follows the system setting
+- Subtle tonal elevation on timer, history, and filter cards for visual depth instead of flat surfaces
 - Saved countdown timers
 - Saved Pomodoro timers with focus, break, session, and long-break cycles
 - Saved interval timers with warmup, work, rest, cooldown, and rounds
@@ -51,7 +55,7 @@ Version: `2.5`
 1. Open Android Studio.
 2. Choose **Open**.
 3. Select this folder:
-   `/Users/mark/Library/CloudStorage/Dropbox-BPTNB/mark lewis/_GPT Meta/App Development/TimerBoard`
+   `/Users/mark/A/code/TimerBoard`
 4. Let Gradle sync, then run the `app` configuration.
 
 ## Versioning
